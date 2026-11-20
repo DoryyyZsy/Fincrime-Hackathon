@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Same-name decoy · Min Shi",
+    "customer_id": "C-05071",
+    "entity_id": "NK-gKDZEG2YiiLtgA78qGBB99",
+    "route": "auto_dismissed",
+    "identity_evidence": {
+      "text": "The exact name matches. The recorded dates of birth are 24 years apart. OFAC records Chinese nationality for the listed person, while the synthetic customer record gives Emirati nationality. The DOB comparison drove the score.",
+      "title": "OFAC’s Min Shi listing",
+      "url": "https://sanctionssearch.ofac.treas.gov/Details.aspx?id=29542"
+    }
+  },
+  {
+    "title": "Disguised true hit · Maslennikvo Yevhen Illich",
+    "customer_id": "C-05001",
+    "entity_id": "NK-H6cwJFGQkhqWdk5TuTKTXB",
+    "route": "likely_true_hit"
+  },
+  {
+    "title": "Grey zone resolved with a UN source",
+    "customer_id": "C-01827",
+    "entity_id": "Q18637952",
+    "route": "auto_dismissed",
+    "require_source": true
+  }
+]

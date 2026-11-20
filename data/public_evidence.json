@@ -1,0 +1,12 @@
+{
+  "Q18637952": [
+    {
+      "title": "UN Security Council consolidated list · QDi.354",
+      "url": "https://main.un.org/securitycouncil/sites/default/files/u8o2zen-al-qaida_0.html",
+      "finding": "The UN's QDi.354 entry records a birth date of 3 May 1982 and Tunisian nationality for the listed person.",
+      "dob": "1982-05-03",
+      "nationality": ["tn"],
+      "verified": true
+    }
+  ]
+}

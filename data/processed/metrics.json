@@ -1,0 +1,1 @@
+{"baseline": {"alerts": 574, "caught": 40, "missed": 0, "false_positives": 534}, "ours": {"alerts": 111, "caught": 40, "missed": 0, "false_positives": 71}, "alert_reduction_pct": 80.66202090592334, "baseline_missed_pairs": [], "missed_pairs": []}
