@@ -40,7 +40,7 @@ def record_decision(alert, action, reason):
 def audit_history(alert):
     if not AUDIT.exists():
         return []
-    with AUDIT.open() as handle:
+    with AUDIT.open(encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle if line.endswith("\n")]
     return [row for row in rows if (row["customer_id"], row["entity_id"]) ==
             (alert["customer"]["customer_id"], alert["entity"]["entity_id"])]

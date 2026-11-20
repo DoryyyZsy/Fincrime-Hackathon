@@ -2,6 +2,8 @@
 
 Streamlit hackathon demo for explaining why two records do or do not describe the same person. The packaged snapshot contains a public OpenSanctions sanctions export and 5,190 synthetic customer records.
 
+Authors: Dory Zhu, Jennifer Liu, Yiding Wang
+
 ## Run the packaged demo
 
 From the project directory, use Python 3.11:

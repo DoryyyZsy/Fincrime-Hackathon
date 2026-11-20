@@ -56,7 +56,7 @@ def build(adjudicator=None):
         })
     demos = []
     by_pair = {(a["customer"]["customer_id"], a["entity"]["entity_id"]): a for a in alerts}
-    for demo in json.loads((ROOT / "data" / "demo_cases.json").read_text()):
+    for demo in json.loads((ROOT / "data" / "demo_cases.json").read_text(encoding="utf-8")):
         alert = by_pair.get((demo["customer_id"], demo["entity_id"]))
         if not alert or alert["route"] != demo["route"]:
             continue

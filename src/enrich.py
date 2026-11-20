@@ -16,7 +16,7 @@ def env():
     result = {}
     path = ROOT / ".env"
     if path.is_file():
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 key, _, value = line.partition("=")
                 result[key.strip()] = value.strip().strip("'\"")
@@ -31,7 +31,7 @@ def allowed(url):
 
 @lru_cache(maxsize=1)
 def curated():
-    return json.loads(FIXTURE.read_text()) if FIXTURE.exists() else {}
+    return json.loads(FIXTURE.read_text(encoding="utf-8")) if FIXTURE.exists() else {}
 
 
 class PublicResearch:

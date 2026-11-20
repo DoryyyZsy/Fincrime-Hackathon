@@ -17,7 +17,7 @@ COLUMNS = [
 
 def config():
     # JSON syntax is also valid YAML 1.2.
-    return json.loads((ROOT / "config.yaml").read_text())
+    return json.loads((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
 def read_rows(name):
@@ -39,11 +39,11 @@ def write_rows(name, rows):
 
 def read_json(name, default=None):
     path = PROCESSED / f"{name}.json"
-    return json.loads(path.read_text()) if path.exists() else default
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
 def write_json(name, payload):
     PROCESSED.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(mode="w", dir=PROCESSED, delete=False) as handle:
+    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=PROCESSED, delete=False) as handle:
         json.dump(payload, handle, ensure_ascii=False, allow_nan=False)
     os.replace(handle.name, PROCESSED / f"{name}.json")

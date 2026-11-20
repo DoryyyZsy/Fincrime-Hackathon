@@ -70,7 +70,7 @@ class Adjudicator:
         self.client = None
         self.cache = read_json("adjudication_cache", {})
         self.model = env().get("GROK_MODEL")
-        self.prompt = PROMPT.read_text()
+        self.prompt = PROMPT.read_text(encoding="utf-8")
         if grok_synthetic:
             validate_synthetic_input()
             if env().get("XAI_API_KEY") and self.model:
