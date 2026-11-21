@@ -77,17 +77,72 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted)
 .trail div{padding:4px 0;border-bottom:1px dashed var(--line)}
 .empty{text-align:center;color:var(--muted);padding:60px 20px}
 .hint{font-size:12px;color:var(--muted)}
+.modes{display:flex;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px}
+.mode{border:0;background:transparent;color:var(--muted);border-radius:9px;padding:7px 14px;font-weight:700;cursor:pointer}
+.mode.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}
+.hidden{display:none!important}
+form label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px}
+form input,form select{width:100%;color:var(--ink);background:var(--solid);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font:inherit}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.preset{border:1px solid var(--line);background:var(--solid);color:var(--ink);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
+.preset:hover{border-color:var(--accent)}
+.run{width:100%;margin-top:14px;padding:11px;font-size:16px}
+.proc{list-style:none;margin:0;padding:0;counter-reset:st}
+.proc>li{position:relative;padding:0 0 18px 46px;opacity:.35;transition:opacity .4s}
+.proc>li.live{opacity:1}
+.proc>li::before{counter-increment:st;content:counter(st);position:absolute;left:0;top:0;width:30px;height:30px;border-radius:50%;
+  display:grid;place-items:center;font-weight:800;background:var(--unk-bg);color:var(--muted)}
+.proc>li.live::before{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}
+.proc>li::after{content:"";position:absolute;left:14px;top:32px;bottom:2px;width:2px;background:var(--line)}
+.proc>li:last-child::after{display:none}
+.proc h4{margin:4px 0 6px;font-size:15px}
+.proc .body{font-size:14px}
+.mini{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.mini span{background:var(--solid);border:1px solid var(--line);border-radius:8px;padding:3px 8px;font-size:13px}
+.overall{display:flex;gap:14px;align-items:center;border-radius:14px;padding:14px 16px}
+.overall b{font-size:22px}
+.o-ALERT{background:var(--match-bg);color:var(--match)}.o-REVIEW{background:var(--warn-bg);color:var(--warn)}.o-CLEAR{background:var(--clear-bg);color:var(--clear)}
+.rule{font-size:12px;color:var(--muted);margin-top:6px}
 @media (max-width:900px){.grid{grid-template-columns:1fr}.tabs{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="logo">✓</div><h1>Screening review</h1>
+    <div class="logo">✓</div><h1>Screening</h1>
+    <div class="modes"><button class="mode" data-m="check">Run a check</button><button class="mode" data-m="queue">Review queue</button></div>
     <span class="grow"></span>
     <label class="hint" for="reviewer">Reviewer</label><input id="reviewer" placeholder="Your name">
     <button class="ghost" id="theme" title="Light / dark">◐</button>
   </header>
+  <div id="checkView" class="hidden">
+    <div class="grid">
+      <form class="card" id="form" autocomplete="off">
+        <b>Who are you checking?</b>
+        <div class="hint" style="margin-top:4px">Try a demo customer:</div>
+        <div class="presets" id="presets"></div>
+        <label for="c_name">Full name *</label><input id="c_name" placeholder="e.g. Elvira Velasco Morillo">
+        <div class="row2">
+          <div><label for="c_entity_type">Type</label><select id="c_entity_type"><option>Individual</option><option>Company</option></select></div>
+          <div><label for="c_dob">Date of birth</label><input id="c_dob" placeholder="e.g. 1968-03-05"></div>
+        </div>
+        <div class="row2">
+          <div><label for="c_country">Country</label><input id="c_country" placeholder="e.g. Spain"></div>
+          <div><label for="c_city">City</label><input id="c_city" placeholder="e.g. Madrid"></div>
+        </div>
+        <details><summary>Link to an existing customer (optional)</summary>
+          <label for="c_account_ref">Account number</label><input id="c_account_ref" placeholder="ACC-…">
+          <label for="c_login_handle">Login</label><input id="c_login_handle">
+          <label for="c_email">Email</label><input id="c_email">
+        </details>
+        <button class="go run" id="run" type="submit">Run check</button>
+        <div class="msg bad" id="cerr"></div>
+      </form>
+      <section class="card" id="process"><div class="empty">Enter a customer, or pick a demo customer, and press <b>Run check</b>.<br>Every step of the match is shown here.</div></section>
+    </div>
+  </div>
+  <div id="queueView">
   <div class="tabs" id="tabs"></div>
   <div class="grid">
     <section class="card">
@@ -95,6 +150,7 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted)
       <div class="list" id="list"></div>
     </section>
     <section class="card" id="detail"><div class="empty">Pick an alert on the left.</div></section>
+  </div>
   </div>
   <p class="hint">Confirmed matches go to the MLRO. Hits the system cannot decide go to an analyst. Clearances close on their own; a fixed 5% are spot-checked. The reason saved with each action is written by the system from the data and the policy. Customer data: keep this server on your own machine.</p>
 </div>
@@ -202,7 +258,95 @@ function wire(d) {
     if (c2) { c2.querySelector(".confirm").classList.add("show"); const m = c2.querySelector(".msg"); m.className = "msg ok"; m.textContent = "Saved: " + r.status + "."; }
   };
 }
+
+// ---------------------------------------------------------------- Run a check: the whole matching process
+const sleep = ms => new Promise(r => setTimeout(r, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : ms));
+const CFIELDS = ["name", "entity_type", "dob", "country", "city", "account_ref", "login_handle", "email"];
+const OVER = {ALERT: ["Alert: a watchlist profile is this customer", "Send to the MLRO."],
+              REVIEW: ["Needs review", "The evidence can't settle it: an analyst decides."],
+              CLEAR: ["Clear", "Every profile that matched the name is a different person."]};
+function setMode(m) {
+  document.querySelectorAll(".mode").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  $("#checkView").classList.toggle("hidden", m !== "check");
+  $("#queueView").classList.toggle("hidden", m !== "queue");
+}
+document.querySelectorAll(".mode").forEach(b => b.onclick = () => setMode(b.dataset.m));
+fetch("/api/examples").then(r => r.json()).then(list => {
+  $("#presets").innerHTML = list.map((p, i) => `<button type="button" class="preset" data-i="${i}">${esc(p.label)}</button>`).join("");
+  $("#presets").querySelectorAll(".preset").forEach(b => b.onclick = () => {
+    const p = list[b.dataset.i];
+    CFIELDS.forEach(f => { $("#c_" + f).value = p[f] || (f === "entity_type" ? "Individual" : ""); });
+    $("#form details").open = !!(p.account_ref || p.login_handle || p.email);
+  });
+}).catch(() => {});
+function step(title, body) {
+  const li = document.createElement("li");
+  li.innerHTML = `<h4>${title}</h4><div class="body">${body}</div>`;
+  $("#steps").appendChild(li);
+  setTimeout(() => li.classList.add("live"), 30);
+  return li;
+}
+$("#form").onsubmit = async e => {
+  e.preventDefault();
+  $("#cerr").textContent = "";
+  const body = Object.fromEntries(CFIELDS.map(f => [f, $("#c_" + f).value.trim()]));
+  if (!body.name) { $("#cerr").textContent = "Enter the customer's name."; return; }
+  $("#run").disabled = true;
+  $("#process").innerHTML = `<ol class="proc" id="steps"></ol>`;
+  try {
+    const given = CFIELDS.filter(f => body[f] && f !== "entity_type").map(f => `<span>${esc(f.replace("_", " "))}: <b>${esc(body[f])}</b></span>`).join("");
+    step("What was entered", `<div class="mini">${given}<span>type: <b>${esc(body.entity_type)}</b></span></div>`);
+    const res = await (await fetch("/api/check", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})).json();
+    if (res.error) throw new Error(res.error);
+    await sleep(700);
+    step("Screen the watchlists",
+      `${res.profiles_screened} watchlist profiles checked against the name. <b>${res.hits.length}</b> share enough of it to be a possible match` +
+      (res.hits.length ? `:<div class="mini">${res.hits.map(h => `<span>${esc(h.watchlist.name)} <small>· ${esc(h.watchlist.category)}</small></span>`).join("")}</div>` : "."));
+    if (!res.hits.length) { await sleep(600); finish(res); return; }
+    await sleep(900);
+    const c = res.customer;
+    step("Find the customer in the bank's systems",
+      `Looked up through <b>${esc(c.link)}</b>. ` + (!c.found ? esc(c.text) :
+        c.ambiguous ? `<b>${esc(c.text)}</b> (${c.records.map(esc).join(", ")}): each is checked separately.` :
+        `Found <b>${esc(c.record)}</b>${c.records.length > 1 ? ` (+${c.records.length - 1} linked record)` : ""}.<div class="mini">` +
+        (c.name ? `<span>name on ID: <b>${esc(c.name)}</b></span>` : "") + (c.dob ? `<span>born <b>${esc(c.dob)}</b></span>` : "") +
+        (c.countries || []).map(x => `<span>${esc(x)}</span>`).join("") + (c.verified ? `<span>ID check: ${esc(c.verified)}</span>` : `<span>no approved ID check</span>`) + `</div>`));
+    for (const h of res.hits) {
+      await sleep(900);
+      const li = step(`Compare with ${esc(h.watchlist.name)}`,
+        `<div class="hit" style="margin:0"><div class="hit-top"><span class="verdict v-${esc(h.decision)}">${VERDICT[h.decision]}</span>
+          <span class="cat">${esc(h.watchlist.category)}${h.watchlist.position ? " · " + esc(h.watchlist.position) : ""}</span></div>
+          <table><tr><th></th><th>Customer</th><th>Listed person</th><th></th></tr></table>
+          <div class="summary" style="display:none">${esc(h.summary)}</div>
+          <div class="rule" style="display:none">Decided by: <b>${esc(h.rule)}</b> · ${esc(h.principle)}</div>
+          <details><summary>Full reason and records</summary><p>${esc(h.reason)}</p><p class="hint">Records: ${esc((h.evidence_ids || []).join(", ") || "none")}</p></details></div>`);
+      const table = li.querySelector("table");
+      for (const f of h.facts) {
+        await sleep(450);
+        table.insertAdjacentHTML("beforeend", `<tr><td class="f">${esc(f.fact)}</td><td>${esc(f.customer)}</td><td>${esc(f.listed)}</td><td class="vd vd-${esc(f.verdict)}">${VD[f.verdict] || ""}</td></tr>`);
+      }
+      await sleep(450);
+      li.querySelector(".summary").style.display = "";
+      li.querySelector(".rule").style.display = "";
+    }
+    await sleep(800);
+    finish(res);
+  } catch (err) {
+    step("Something went wrong", esc(err.message));
+  } finally { $("#run").disabled = false; }
+};
+function finish(res) {
+  const [title, text] = OVER[res.overall];
+  step("Verdict", `<div class="overall o-${res.overall}"><div><b>${title}</b><br>${text}</div></div>
+    <p class="hint">${res.hits.length} possible match(es) · ${res.ms} ms. Same engine and policy as the submitted system.</p>`);
+}
+
 const params = new URLSearchParams(location.search);
+setMode(params.get("alert") || params.get("mode") === "queue" ? "queue" : "check");
+if (params.get("name")) {   // ?name=...&dob=...&account_ref=...&run=1 fills the form (and runs it) for a demo
+  CFIELDS.forEach(f => { if (params.get(f)) $("#c_" + f).value = params.get(f); });
+  if (params.get("run")) $("#form").requestSubmit();
+}
 load().then(() => {
   const id = params.get("alert");
   const a = alerts.find(x => x.alert_id === id);

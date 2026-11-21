@@ -25,7 +25,7 @@ from .compare import decide_case
 from .customer import resolve
 from .data import DataRoom
 from .hit import build_hit
-from .review_data import ReviewBook
+from .review_data import CHECK_LABEL, ReviewBook, fact_rows, plain_summary
 
 HERE = os.path.dirname(__file__)
 STAFF_PAGE = os.path.join(HERE, "staff_view.html")
@@ -113,12 +113,25 @@ class Engine:
         results = []
         for raw in hits:
             case = decide_case(res, build_hit(self.room, raw), alert)
-            results.append(self._present(case, raw))
+            item = self._present(case, raw)
+            comp = case.comparisons[0] if case.comparisons else None
+            rule = CHECK_LABEL.get(case.teacher_code)
+            principle = ("POLICY principle 6: clear only on a contradiction" if case.teacher_decision == "DIFFERENT_ENTITY"
+                         else "POLICY principle 7: confirm only on agreement" if case.teacher_decision == "SAME_ENTITY"
+                         else "POLICY principle 3: several customers fit" if case.teacher_code == "AMBIGUOUS_CUSTOMER_RECORD"
+                         else "POLICY: review when nothing settles it")
+            item.update({"summary": plain_summary(case), "facts": fact_rows(case),
+                         "matched_name": (comp.matched_hit_name or "").rstrip(". ") if comp else "",
+                         "rule": rule or case.teacher_code, "principle": principle})
+            results.append(item)
         order = {"SAME_ENTITY": 0, "REVIEW": 1, "DIFFERENT_ENTITY": 2}
         results.sort(key=lambda r: order[r["decision"]])
         decisions = {r["decision"] for r in results}
         overall = ("ALERT" if "SAME_ENTITY" in decisions else "REVIEW" if "REVIEW" in decisions else "CLEAR")
-        return {"overall": overall, "customer": self._customer(res), "hits": results,
+        link = {"account": f"account {alert['account_ref']}", "login": f"login {alert['login_handle']}",
+                "email": f"email {alert['email']}"}.get(res.link_type, "a search on the name, date of birth and location")
+        return {"overall": overall, "customer": {**self._customer(res), "link": link,
+                                                 "candidates": len(res.candidates)}, "hits": results,
                 "screened": alert["customer"], "ms": int((time.time() - t0) * 1000),
                 "profiles_screened": len(self.profiles)}
 
@@ -209,7 +222,8 @@ def make_handler(engine):
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 self.send_response(302)
-                self.send_header("Location", "/review.html")
+                query = self.path.partition("?")[2]
+                self.send_header("Location", "/review.html" + (f"?{query}" if query else ""))
                 self.end_headers()
             elif path == "/staff.html":
                 with open(STAFF_PAGE, encoding="utf-8") as handle:
