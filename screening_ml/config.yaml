@@ -26,7 +26,10 @@ train:
   balance_classes: true    # inverse-frequency class weights
 
 inference:
-  use_cost_matrix: true    # pick the decision with the lowest expected cost
+  # false = most likely class, then the clear_min_prob safety check (recommended).
+  # true = lowest expected cost under the official matrix. Careful: because a wrong clear costs 60 but a
+  # wrong SAME only 3, this almost never clears and turns namesakes into SAME_ENTITY.
+  use_cost_matrix: false
   clear_min_prob: 0.9      # never clear a hit unless P(DIFFERENT_ENTITY) >= this
   rule_guard: true         # never clear a hit unless an SOP contradiction actually fired
 

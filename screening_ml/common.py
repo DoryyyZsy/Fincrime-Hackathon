@@ -38,7 +38,7 @@ def decision_score(y_true, y_pred):
     cost = COST.numpy()
     total = sum(cost[t, p] for t, p in zip(y_true, y_pred))
     baseline = sum(cost[t, DECISIONS.index("REVIEW")] for t in y_true)
-    return 100 * max(0.0, 1 - total / baseline) if baseline else 0.0
+    return float(100 * max(0.0, 1 - total / baseline)) if baseline else 0.0
 
 
 def report(name, y_true, y_pred, code_true=None, code_pred=None, gold_rows=None):

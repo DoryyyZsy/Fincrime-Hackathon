@@ -63,7 +63,10 @@ python data/screening/validate.py --data data/screening/dev --output output/dev.
 python -m screening_ml.finetune --labels my_labels.jsonl   # optional
 ```
 
-`--device cuda|mps|cpu` overrides the automatic choice. Feature building takes about 5 seconds and is cached in
+Fine-tuning on `practice_labels.jsonl` (the default) uses up the gold labels, so after that the gold score is no
+longer an independent check; fine-tune on your own extra labels when you have them.
+
+`--device cuda|mps|cpu` overrides the automatic choice. Feature building takes about 5-10 seconds and is cached in
 `artifacts/cache/` (keyed by the data files and the code, so edits invalidate it). Training takes seconds.
 
 ## Where to tune
@@ -81,7 +84,24 @@ python -m screening_ml.finetune --labels my_labels.jsonl   # optional
 
 ## Results on the dev set
 
-RESULTS_PLACEHOLDER
+Seed 42, default config, CPU (about 11 s including feature building):
+
+| Set | n | Accuracy | Decision score* | Unsafe clears |
+|---|---|---|---|---|
+| Silver train | 654 | 98.6% | 98.0 | 0 |
+| Silver validation | 115 | 93.9% | 90.9 | 0 |
+| Gold practice labels (held out) | 50 | 100% | 100.0 | 0 |
+| Rule teacher on gold | 50 | 100% | 100.0 | 0 |
+
+\* the organisers' score: share of cost saved versus sending everything to REVIEW.
+
+`validate.py` on `output/dev.jsonl`: 819 lines, 0 problems; practice labels 50/50 right, reason code 96%,
+customer record 100%. The network agrees with the rule teacher on 803 of 819 hits; all 16 disagreements are
+clears the network was not confident about, which it sends to REVIEW (the safe direction). Two training runs
+give byte-identical output.
+
+Note: the official cost matrix makes "lowest expected cost" a poor decision rule (a wrong clear costs 60 but a
+wrong SAME only 3, so it labels namesakes SAME). `inference.use_cost_matrix` is therefore off by default.
 
 ## Limits, honestly
 

@@ -74,7 +74,7 @@ def loss_fn(dec_logits, code_logits, y_dec, y_code, cfg, class_weights=None):
 def decide(dec_logits, code_logits, cfg):
     """Turn logits into decisions: minimise expected cost, and only clear when confident enough."""
     probs = dec_logits.softmax(-1)
-    if cfg.get("use_cost_matrix", True):
+    if cfg.get("use_cost_matrix", False):
         exp_cost = probs @ COST.to(probs.device)          # cost of each possible prediction
         dec = exp_cost.argmin(-1)
     else:
