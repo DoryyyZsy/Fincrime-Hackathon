@@ -16,3 +16,10 @@ artifacts/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Working copies of hackathon data kept in the project root (participants only, never commit)
+/screening-track*.zip
+/to_rewrite*.csv
+/to_rewrite*.jsonl
+/sample_30*.csv
+/Claude outputs/
