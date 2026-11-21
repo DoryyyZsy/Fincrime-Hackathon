@@ -209,7 +209,7 @@ _ALIASES = {
     "turkiye": "Turkey", "holland": "Netherlands", "the netherlands": "Netherlands", "viet nam": "Vietnam",
     "hong kong sar": "Hong Kong", "uae": "United Arab Emirates",
 }
-NOT_COUNTRIES = {"international", "europe", "none", "unknown", "n/a", "na", "global", "worldwide", ""}
+NOT_COUNTRIES = {"international", "europe", "none", "unknown", "n/a", "n a", "na", "global", "worldwide", ""}
 
 # Every country name we know of; extended at load time with names seen in the data.
 KNOWN_COUNTRIES = set(_CODES.values()) | set(_ADJECTIVES.values()) | set(_ALIASES.values()) | {
@@ -235,8 +235,14 @@ def _fold(text):
     return "".join(c for c in text if not unicodedata.combining(c))
 
 
+def _letters(text):
+    """Accent-free lowercase letters and single spaces; apostrophes vanish ("Cote D'Ivoire" -> "cote divoire")."""
+    text = re.sub(r"['’`´]", "", _fold(text or "").lower())
+    return re.sub(r" +", " ", re.sub(r"[^a-z]", " ", text)).strip()
+
+
 def _country_key(text):
-    return re.sub(r"[^a-z ]", "", _fold(text).lower()).strip()
+    return _letters(text)
 
 
 _BY_KEY = {}
@@ -294,9 +300,7 @@ def countries_in_text(text):
     if _COUNTRY_RE is None or _COUNTRY_RE[0] != len(_BY_KEY):
         keys = sorted((k for k in _BY_KEY if len(k) > 3), key=len, reverse=True)
         _COUNTRY_RE = (len(_BY_KEY), re.compile(r"\b(" + "|".join(re.escape(k) for k in keys) + r")\b"))
-    folded = re.sub(r"[^a-z ]", " ", _fold(text or "").lower())
-    folded = re.sub(r" +", " ", folded)
-    return {_BY_KEY[m] for m in _COUNTRY_RE[1].findall(folded)}
+    return {_BY_KEY[m] for m in _COUNTRY_RE[1].findall(_letters(text))}  # same folding as the keys
 
 
 # ---------------------------------------------------------------- names

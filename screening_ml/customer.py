@@ -9,7 +9,7 @@ from . import normalize as N
 # none of the development-set notes use them. Unsure stays unused (principle 4).
 _POSITIVE_KYC = re.compile(
     r"(?i)\b(?:verif\w*|approv\w*|confirm\w*|cleared|clears|pass(?:ed|es|ing)?|"
-    r"success\w*|validat\w*|complet\w*|match(?:es|ed|ing)?|accept(?:ed|s|ance)?)\b"
+    r"success\w*|validat\w*|complet\w*|match(?:es|ed|ing)?|accept(?:ed|s|ance)?|\bok)\b"
 )
 _NEGATIVE_KYC = re.compile(
     r"(?i)(?:"
@@ -20,7 +20,7 @@ _NEGATIVE_KYC = re.compile(
     r"\bnot completed|\bdid not pass|\bdidn'?t pass|\bnot pass|"
     r"\bdid not (?:clear|verify|complete|succeed)|"
     r"\bresubmit|\bincomplete|\bpending|\binconclusive|"
-    r"\bwithdrawn|\bcancell?ed"
+    r"\bwithdrawn|\bcancell?ed|\bnot ok"
     r")"
 )
 # Birth cues. The date beside the cue is the DOB; the first other full date in the
@@ -32,6 +32,12 @@ _CUE_WINDOW = 40
 _MAX_PERSON_AGE = 110
 # "verified on 2024-07-12" is the check, not a birth date. "born on 6 May 1972" is.
 _CHECK_ON = re.compile(r"(?i)(?:\bon|\bas of)\s*$")
+# A support note that looks like it says where the customer lived. Used only to notice a note
+# whose country could not be read (the safety net). Countries themselves are taken from every note.
+RESIDENCE_WORDS = re.compile(
+    r"(?i)resid|\blived?\b|living|\bbased\b|\bbase\b|employ|\bwork|career|profession|personal life|\blife\b|"
+    r"\bties\b|moved|relocat|located|\bhome\b|\bstay|abroad|emigrat|immigrat|settled|address")
+YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 
 
 @dataclass
@@ -61,6 +67,7 @@ class Person:
     # The birth date came only from a model quote that was checked against the note.
     llm_dob_only: bool = False
     cities: dict = field(default_factory=dict)
+    unread_notes: list = field(default_factory=list)  # residence/identity notes whose facts could not be read
 
 
 @dataclass
@@ -246,11 +253,31 @@ def _kyc_note_identity(note, screened_at=None):
     created = N.parse_date(note.get("created_at"))
     screened = N.parse_date(screened_at) if not isinstance(screened_at, tuple) else screened_at
     dob = _dob_from_kyc_text(text, created, screened)
-    caps = re.findall(r"\b[A-Z][A-Z'\-]+(?:\s+[A-Z][A-Z'\-]+)+\b", text)
-    caps = [c for c in caps if not re.fullmatch(r"(?:DOB|ID|KYC|USA|UK)(?:\s.*)?", c)]
-    name = max(caps, key=len) if caps else None
+    name = _caps_name(text)
     countries = N.countries_in_text(text.replace(name, " ") if name else text)  # 'MARCO JORDAN' is not Jordan
     return {"name": name, "dob": dob, "countries": countries, "date": created}
+
+
+_NOT_NAME = {"DOB", "ID", "KYC", "USA", "UK", "US", "EU", "UAE", "AML", "PEP", "SSN", "NIN", "BVN", "OK"}
+
+
+def _caps_name(text):
+    """The longest run of ALL-CAPS words (accents allowed: FERNÁNDEZ), i.e. the name as written on the document."""
+    runs, cur = [], []
+    for match in re.finditer(r"[^\s,;:()]+", text or ""):
+        token = re.sub(r"(?:['’]s|\.)$", "", match.group(0))
+        if any(c.isalpha() for c in token) and token == token.upper() and token.upper() not in _NOT_NAME:
+            cur.append(token)
+        else:
+            if cur:
+                runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    if not runs:
+        return None
+    best = max(runs, key=lambda run: (len(run), len(" ".join(run))))
+    return " ".join(best)
 
 
 def build_person(room, cid, screened_at=None, extractions=None):
@@ -301,15 +328,20 @@ def build_person(room, cid, screened_at=None, extractions=None):
                         for country in sorted(ident["countries"]):
                             person.countries.setdefault(country, []).append(note["note_id"])
                         verified.append((ident["date"], ident["name"], ident["dob"], note["note_id"]))
+                        if not ident["dob"] or not ident["name"] or not ident["countries"]:
+                            person.unread_notes.append(note["note_id"])
                     else:
                         discarded_kyc_note = True
                 else:
-                    # Any country a support note names is tied to the customer. Gating on
-                    # "lived" / "work" drops the country when the sentence is reworded
-                    # ("stayed", "job"), and the missing country becomes a LOCATION_MISMATCH
-                    # clearance. An extra country can only remove that clearance.
-                    for country in sorted(N.countries_in_text(note.get("text") or "")):
+                    # Any country a support note names is tied to the customer. A keyword gate
+                    # would drop the country when the sentence is reworded and the miss becomes
+                    # a LOCATION_MISMATCH. A note that still looks like a residence but names no
+                    # country is recorded as unread so the safety net will not clear on it.
+                    found = N.countries_in_text(note.get("text") or "")
+                    for country in sorted(found):
                         person.countries.setdefault(country, []).append(note["note_id"])
+                    if not found and RESIDENCE_WORDS.search(note.get("text") or "") and YEAR.search(note.get("text") or ""):
+                        person.unread_notes.append(note["note_id"])
                 continue
             from .llm_extract import apply_customer_note
             discarded, conflict = apply_customer_note(person, note, screened_at, extractions, verified, _kyc_note_identity)

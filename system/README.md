@@ -54,7 +54,8 @@ search_results.jsonl ─┘    names + aliases; DOB from `dobs` → age sentence
 | `screening_ml/normalize.py` | dates (6+ formats, partial dates stay partial), countries (names, codes, adjectives), names (POLICY.md principle 8) |
 | `screening_ml/customer.py` | customer resolution and the person picture |
 | `screening_ml/hit.py` | watchlist-side facts from fields, free text and search results |
-| `screening_ml/compare.py` | the SOP checks, reason codes, evidence and reason sentences |
+| `screening_ml/compare.py` | the SOP checks, the safety net, reason codes and evidence |
+| `screening_ml/reasoning.py` | the `reason` field: who the customer is, the decisive facts, what they mean (2-4 sentences) |
 
 ## How the customer is found
 
@@ -99,14 +100,52 @@ search_results.jsonl ─┘    names + aliases; DOB from `dobs` → age sentence
   ("International" and "Europe" are not countries).
 - **Time**: the earliest "According to …; Month D, YYYY:" report and any date of death.
 
+## Safety net: never clear on evidence we may have misread
+
+A wrong clear costs 60, an unnecessary review 2-3. We measured what each evidence source contributes (switch
+it off, rebuild every case): without the residence notes the system makes **3 unsafe clears on the practice
+labels** (decision score 100 → 0), without the free-text KYC notes 2. These are exactly the free-text notes the
+unseen set rewords. So a clear is held for review (`INSUFFICIENT_DATA`, with the note cited and the reason
+saying why) when:
+
+1. it is a **location** clear while one of the customer's notes looks like it says where they lived (residence
+   or work wording plus a year) but no country could be read from it;
+2. it is a **verified-name** clear whose name came from a free-text note and shares no part with the customer's
+   own records, or from a note we only partly understood;
+3. it is a **DOB** clear on a declared (unverified) date of birth while an identity note could not be fully read.
+
+Residence detection is deliberately broad ("established their life and career inside …", "ties to …",
+"relocated", a year range): an extra country can only make a location clear less likely.
+
+Stress test: we rewrote all 3,067 residence notes in a copy of dev so that no country could be read.
+
+| | Unsafe clears on practice labels | Practice decision score | Dev hits newly cleared |
+|---|---|---|---|
+| Safety net off | 3 | 0.0 | 41 |
+| Safety net on | 0 | 97.2 | 0 |
+
+On the real dev data the net never has to step in, so it costs nothing there. Writing the paraphrase tests
+(`tests/test_screening_rewording.py`) also found a real bug: "Cote D'Ivoire" was never recognised in free text,
+which had cleared one dev hit (H-BEDA04) whose customer lived there. It is now `REVIEW`.
+
 ## How evidence is represented
 
 Every fact carries the record IDs it came from (`Fact(value, sources)`), so each check knows its own evidence:
 a DOB from a KYC note cites the `NOTE-…`, a country from an ID document cites the `KYC-…`, a hit DOB found in a
 search result cites the `SR-…`. The output cites only the evidence of the check that decided the hit (for
-example only the DOB source for `DOB_MISMATCH`), not everything looked at. The reason sentence is generated
-from the same facts, so it always names this hit's own dates, countries and names, and says what is missing
-when the answer is `REVIEW`.
+example only the DOB source for `DOB_MISMATCH`), not everything looked at.
+
+The `reason` is written by `screening_ml/reasoning.py` from the same facts, always in two to four sentences:
+
+1. **who the customer is** and how the alert led there ("resolves to customer CUS-804632 through account
+   ACC-A82365 (identity verified in NOTE-8548C1)"), or that no record fits, or that several people do and what
+   each would lead to;
+2. **the decisive facts**, with the records they came from (this hit's own dates, countries and names);
+3. **what that means**: for a clear, that the names may agree but one contradiction is enough; for a match, that
+   nothing contradicts it (and that no country links them, when none does); for a review, exactly what is
+   missing ("the date of birth cannot be compared") or which note could not be read.
+
+All 819 dev reasons have three or four sentences (`tests/test_screening_output.py` checks this).
 
 ## Keeping results the same run to run
 
@@ -169,16 +208,18 @@ engine (see `screening_ml/README.md`).
 
 ## Time and cost
 
-About 4 seconds for the dev set (440 alerts, 819 hits, 72k customers) in this environment, most of it loading
-the files. No API calls, so cost is $0.
+About 4 seconds for the dev set (440 alerts, 819 hits, 72k customers) in this environment with no model
+key, most of it loading the files. No API calls, so cost is $0. With a key, the extractor adds the calls
+described above.
 
 ## Results on the development set
 
 `validate.py --score practice_labels.jsonl`: 819 lines, 0 problems; practice hits 50/50 right decisions,
-0 unsafe clearances, decision score 100, reason code 100%, customer record 100%. Dev decisions: 463
-`DIFFERENT_ENTITY`, 134 `SAME_ENTITY`, 222 `REVIEW`. One of those clearances, H-3DB30F, is `DOB_MISMATCH`
-rather than `LOCATION_MISMATCH`: the profile says he "reached 37 years of age" in November 1981.
-Caveat: we looked at the practice labels while building, so this score is optimistic; the unseen set is the real test.
+0 unsafe clearances, decision score 100, reason code 100%, customer record 100%. Dev decisions: 462
+`DIFFERENT_ENTITY`, 134 `SAME_ENTITY`, 223 `REVIEW`. One clearance, H-3DB30F, is `DOB_MISMATCH` because the
+profile says he reached 37 years of age in November 1981. Tests: `python -m pytest tests/test_screening_*.py`
+and `python3 -m unittest tests.test_screening_extract tests.test_llm_extract`. Caveat: we looked at the
+practice labels while building, so this score is optimistic; the unseen set is the real test.
 
 ## Three cases
 
@@ -188,7 +229,7 @@ The hit has no `dobs`, but its profile notes say he was 46 when questioned in Ja
 1979 is more than a year from both, so every birth date the hit allows is contradicted.
 ```json
 {"decision": "DIFFERENT_ENTITY", "reason_code": "DOB_MISMATCH", "customer_record_id": "CUS-804632",
- "reason": "The customer's date of birth is 1979-11-08 (NOTE-8548C1) but the hit's profile notes put its birth date at 1976, 1977.",
+ "reason": "The alert resolves to customer CUS-804632 through account ACC-A82365 (identity verified in NOTE-8548C1). The customer's date of birth is 1979-11-08 (NOTE-8548C1) but the hit's profile notes put its date of birth as 1976 or 1977. The names agree (Tilley, Michael Earl), but this contradiction is enough under the policy to show the hit is a different person who shares the name.",
  "evidence": ["NOTE-8548C1"]}
 ```
 
@@ -198,7 +239,7 @@ is a Spanish member of parliament described as aged 30 in November 1998 (born 19
 country agree and nothing contradicts them.
 ```json
 {"decision": "SAME_ENTITY", "reason_code": "NAME_DOB_LOCATION_MATCH", "customer_record_id": "CUS-377745",
- "reason": "The customer's date of birth 1968-03-05 (NOTE-14E25A) agrees with the hit's 1967 or 1968. Both the customer and the hit are linked to Spain. The customer's name agrees with the hit's name Elvira Velasco Morillo.",
+ "reason": "The alert resolves to customer CUS-377745 through account ACC-C4CA34 (identity verified in NOTE-14E25A). The customer's date of birth 1968-03-05 (NOTE-14E25A) agrees with the hit's 1967 or 1968. Both the customer and the hit are linked to Spain. The customer's name agrees with the hit's name Elvira Velasco Morillo.",
  "evidence": ["CUS-377745", "NOTE-14E25A"]}
 ```
 
@@ -208,37 +249,54 @@ the customer lived and worked in the United States from 2013 to 2023, so the cou
 no date of birth, so nothing contradicts it and nothing confirms it.
 ```json
 {"decision": "REVIEW", "reason_code": "INSUFFICIENT_DATA", "customer_record_id": "CUS-459031",
- "reason": "Both the customer and the hit are linked to United States. The customer's name agrees with the hit's name Abdul Rahman Yasin. Nothing in the customer's records contradicts the hit, and the date of birth cannot be compared with it, so the hit can be neither cleared nor confirmed.",
+ "reason": "The alert resolves to customer CUS-459031 through the alert's email address (identity verified in NOTE-588201). Both the customer and the hit are linked to United States. The customer's name agrees with the hit's name Abdul Rahman Yasin. Nothing in the customer's records contradicts the hit, and the date of birth cannot be compared with it, so the hit can be neither cleared nor confirmed.",
  "evidence": ["NOTE-10AEAB"]}
 ```
+
+## Analyst screen
+
+`python -m screening_ml.analyst_view --data <data folder>` (standard library, about 3 seconds) writes
+`artifacts/analyst_view.html`: one self-contained page an analyst opens in any browser, offline.
+
+- Headline numbers: hits decided, share cleared automatically, same-entity, review, practice-label accuracy and
+  unsafe clears, hits held by the safety net. Click a tile to filter.
+- A queue of hits filterable by decision, reason code, practice labels, safety-net holds, or free-text search
+  (name, hit, alert or customer ID); `j`/`k` to move, `/` to search.
+- For each hit: the decision and reason; the trail from the alert to the customer (link, joint holders,
+  merged records); customer and watchlist hit side by side, each fact with the record it came from; every SOP
+  check, fired or not; any cited record opens in place; the practice label when there is one.
+- Analysts can agree or override (a reason is required), and export their decisions as JSON Lines.
+
+The page embeds customer data, so it lives in the git-ignored `artifacts/` folder and is never published.
 
 ## Checks
 
 `tests/test_screening_extract.py` is stdlib `unittest` (slash dates, KYC cues, rejection phrases, age paraphrases).
 `tests/test_llm_extract.py` checks quotes, disagreement, the clearance guard, the cache, and a rejected
 model outcome, with a fake transport and no network.
+`python -m pytest tests/test_screening_*.py` covers name rules, paraphrased residence / KYC / age sentences,
+and the safety net.
 `tests/perturb_screening.py <data folder>` rebuilds the folder four ways and scores each with `validate.py`:
 KYC-note `created_at` shifted by two days, residence verbs paraphrased (`stayed`, `job`, …), age wording
 paraphrased, and KYC notes rewritten as "not verified / did not pass / resubmit" with the birth year moved.
-On the dev folder the four perturbed runs have 0 unsafe clearances and 0 decisions that flip to
-`DIFFERENT_ENTITY`. The rejected-note run reviews more hits (practice score 67.6) because those notes were
-real passes and dropping them removes DOB and document-country evidence. The same script then reruns every
-copy with `SCREENING_LLM_MOCK=1` and checks that the stand-in opens no new clearance against the regex file.
+After this merge those four runs still have 0 unsafe clearances and 0 new clearances. The script then reruns
+every copy with `SCREENING_LLM_MOCK=1` and checks that the stand-in opens no new clearance.
 
 ## Known limits
 
-- Ages are still regexes. A sentence that states an age without putting a number next to "age", "year old"
-  or "born" is missed. Missing a DOB removes the rule that blocks a location clearance when name and DOB
-  agree, so a badly paraphrased age can still clear a hit the DOB would have saved. The paraphrases in
-  `tests/perturb_screening.py` do not.
+- Ages are still regexes. A sentence that states an age without putting a number next to "age", "year old",
+  "born", or the "(41)" / "At 52," frames is missed. The safety net turns an unread residence or identity
+  note into `REVIEW` instead of a location or name clearance. A missed date of birth can still, when the
+  name and date of birth would have agreed, remove the block on a location clearance.
 - A KYC note that gives a date with no birth cue ("national ID dated 1952-01-21") does not yield a DOB.
-  Seven development-set notes are in that shape. The declared record DOB is used instead.
 - Slash dates on customer records and KYC notes are day-first, because every unambiguous slash date in those
   fields is day-first and the screened date agrees. A hit profile is not written that way; an ambiguous hit
-  date keeps both readings. A customer file that switched to month-first would be misread.
+  date keeps both readings.
 - Any country named in a support note is tied to the customer. A note about a transfer destination can add
-  a country and suppress a location clearance. That is the safe direction. For a company, the same extra
-  country can support a name-and-country match.
+  a country and suppress a location clearance. For a company, the same extra country can support a
+  name-and-country match.
 - A KYC note we cannot read as a pass is dropped entirely. If that note was the real identity check, the hit
   goes to review instead of being confirmed, and it is not cleared from the declared DOB or from the countries
-  that remain. A genuinely failed note plus a true country mismatch is therefore reviewed, not cleared.
+  that remain.
+- Clears rest on one contradiction each. A wrongly parsed country or date could clear a real match; the
+  country and date parsers are therefore conservative (unknown parts never count as a mismatch).

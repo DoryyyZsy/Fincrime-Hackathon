@@ -332,7 +332,10 @@ def apply_customer_note(person, note, screened_at, book, verified, kyc_identity)
         for country in sorted(countries):
             person.countries.setdefault(country, []).append(note["note_id"])
         verified.append((ident["date"], ident["name"], dob, note["note_id"], bool(only and dob is not None)))
+        if not dob or not ident["name"] or not (set(ident["countries"]) | (set(facts.countries) if facts is not None else set())):
+            person.unread_notes.append(note["note_id"])
         return False, conflict
+    from .customer import RESIDENCE_WORDS, YEAR
     countries = set(N.countries_in_text(text))
     if facts is not None:
         countries.update(facts.countries)
@@ -340,6 +343,8 @@ def apply_customer_note(person, note, screened_at, book, verified, kyc_identity)
             person.cities.setdefault(city, []).append(note["note_id"])
     for country in sorted(countries):
         person.countries.setdefault(country, []).append(note["note_id"])
+    if not countries and RESIDENCE_WORDS.search(text) and YEAR.search(text):
+        person.unread_notes.append(note["note_id"])
     return False, False
 
 
