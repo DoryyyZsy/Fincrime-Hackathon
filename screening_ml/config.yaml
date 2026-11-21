@@ -7,7 +7,6 @@ deterministic: true        # same results run to run (10% of the hackathon score
 
 labels:
   source: silver           # silver = SOP rule engine labels; gold labels stay held out for validation
-  exclude_gold_from_train: true
   val_fraction: 0.15       # silver hold-out for early stopping
   # Keep hits that share an alert, a customer or a watchlist name on one side of the split, and drop from
   # train/val anything sharing them with a gold hit. false = per-hit split (leaky: inflates val and gold).
@@ -46,7 +45,6 @@ inference:
   same_guard: true         # never say SAME_ENTITY when an SOP contradiction fired (REVIEW instead)
 
 finetune:
-  labels: data/screening/dev/practice_labels.jsonl   # any file in practice_labels.jsonl format
   epochs: 100
   lr: 0.0003
   freeze_backbone: true    # train only the heads (safer with few labels)

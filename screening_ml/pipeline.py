@@ -1,10 +1,7 @@
-"""Run the rule engine, optionally after the OpenRouter extractors.
-
-With no client the decisions are exactly the regex engine. A client that fails
-open is treated the same way.
-"""
+"""Build identity evidence and adjudicate every hit with the deployed HitNet."""
 import json
 
+from .neural import classify
 from .compare import decide_case
 from .customer import resolve
 from .hit import build_hit
@@ -48,7 +45,7 @@ def adjudicate(room, client=None):
                 llm_hit = build_hit(room, hit, book)
                 llm_case = decide_case(llm_resolution, llm_hit, alert)
                 case = reconcile(regex_case, llm_case, llm_hit, llm_resolution)
-            rows.append(_row(case))
+            rows.append(_row(classify(case, alert, hit)))
         except Exception as error:
             rows.append(_fallback(hit, alert["alert_id"], type(error).__name__, resolutions.get(alert["alert_id"])))
             errors += 1

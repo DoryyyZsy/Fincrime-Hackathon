@@ -65,8 +65,8 @@ def _meaning(comp, code, decision):
         return "This contradiction alone shows the hit is a different entity."
     if decision == "SAME_ENTITY":
         if code == "NAME_DOB_MATCH" and not comp.country_overlap:
-            return "No country links them, but nothing in the customer's records contradicts the match, so the alert goes to compliance."
-        return "Nothing in the customer's records contradicts the match, so the alert goes to compliance."
+            return "The available identity evidence supports the match, with no shared country established."
+        return "The available identity evidence supports the match."
     return ""
 
 

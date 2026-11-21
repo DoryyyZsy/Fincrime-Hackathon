@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Screening hit adjudication: system/run <data folder> <output file>
 
-Reads only <data folder> and writes one JSON line per hit. The rule engine decides
-every hit. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
+Reads only <data folder> and writes one JSON line per hit. HitNet scores each hit, with evidence checks on its predictions. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
 OpenRouter model first and then checked against the regex extractors. No key,
-SCREENING_LLM=0, or any model failure uses the regex engine alone.
+SCREENING_LLM=0, or any model failure uses local evidence extraction.
 """
 import os
 import sys
@@ -15,6 +14,7 @@ sys.path.insert(0, ROOT)
 
 try:  # stdlib modules only; the model client uses urllib
     from screening_ml.data import DataRoom
+    from screening_ml.neural import parameters
     from screening_ml.llm_extract import LlmClient
     from screening_ml.pipeline import adjudicate, write_rows
 except ImportError as error:
@@ -26,6 +26,7 @@ def main(argv):
         sys.exit("usage: system/run <data folder> <output file>")
     folder, out_path = argv[1], argv[2]
     t0 = time.time()
+    parameters()  # Fail clearly if the packaged model is missing or incompatible.
     room = DataRoom(folder)
     client = LlmClient.from_env()
     rows, errors, stats = adjudicate(room, client)
@@ -40,7 +41,7 @@ def main(argv):
     if stats:
         message += "; " + stats
     elif client is None:
-        message += "; regex only (no OpenRouter key)"
+        message += "; HitNet with local evidence extraction"
     print(message, file=sys.stderr)
 
 

@@ -9,7 +9,6 @@ import os
 import pickle
 import time
 
-import numpy as np
 
 from .compare import decide_case
 from .customer import resolve
@@ -38,7 +37,7 @@ FEATURE_NAMES = [
 ]
 
 
-def featurize(case, alert, hit_raw):
+def feature_values(case, alert, hit_raw):
     res = case.resolution
     comp = case.comparisons[0]
     p, h = comp.person, comp.hit
@@ -80,13 +79,19 @@ def featurize(case, alert, hit_raw):
         "cat_other": cat not in ("sanctions", "pep", "enforcement", "adverse media"),
         "hits_in_alert_log": math.log1p(len(alert.get("hit_ids") or [])),
     }
-    return np.array([float(f[name]) for name in FEATURE_NAMES], dtype=np.float32)
+    return [float(f[name]) for name in FEATURE_NAMES]
+
+
+def featurize(case, alert, hit_raw):
+    import numpy as np
+    return np.asarray(feature_values(case, alert, hit_raw), dtype=np.float32)
 
 
 def build_cases(folder, cache_dir="artifacts/cache", use_cache=True, verbose=True):
     """Resolve every alert and hit in a data folder. Cached per folder contents (rebuild with use_cache=False)."""
+    import numpy as np
     stamp = hashlib.sha1()
-    for name in sorted(os.listdir(folder)):
+    for name in sorted(set(os.listdir(folder)) - {"practice_labels.jsonl"}):
         st = os.stat(os.path.join(folder, name))
         stamp.update(f"{name}:{st.st_size}:{int(st.st_mtime)}".encode())
     code_dir = os.path.dirname(__file__)
@@ -111,8 +116,7 @@ def build_cases(folder, cache_dir="artifacts/cache", use_cache=True, verbose=Tru
             case = decide_case(resolution, build_hit(room, hit_raw), alert)
             cases.append(case)
             X.append(featurize(case, alert, hit_raw))
-    out = {"cases": cases, "X": np.stack(X), "feature_names": FEATURE_NAMES,
-           "practice_labels": room.practice_labels}
+    out = {"cases": cases, "X": np.stack(X), "feature_names": FEATURE_NAMES}
     if verbose:
         print(f"built {len(cases)} cases in {time.time() - t0:.1f}s")
     os.makedirs(cache_dir, exist_ok=True)

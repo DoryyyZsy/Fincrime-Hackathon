@@ -15,14 +15,15 @@ from .common import apply_drops, gold_targets, load_checkpoint, load_config, rep
 from .data import read_jsonl
 from .features import build_cases
 from .model import decide, pick_device, set_seed
-from .train import run_epochs
+from .holdout import is_practice_hit
+from .train import leakage_groups, run_epochs
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config")
     ap.add_argument("--checkpoint", default="artifacts/model.pt")
-    ap.add_argument("--labels")
+    ap.add_argument("--labels", required=True, help="independently reviewed, non-practice hits")
     ap.add_argument("--out", default="artifacts/model_finetuned.pt")
     ap.add_argument("--device")
     args = ap.parse_args(argv)
@@ -34,7 +35,12 @@ def main(argv=None):
     model, ckpt = load_checkpoint(args.checkpoint, device)
 
     data = build_cases(cfg["data_dir"], cache_dir=f"{cfg['artifacts_dir']}/cache")
-    labels = read_jsonl(args.labels or fcfg["labels"])
+    labels = read_jsonl(args.labels)
+    groups = leakage_groups(data["cases"])
+    excluded = {groups[i] for i, case in enumerate(data["cases"]) if is_practice_hit(case.hit_id)}
+    blocked = {case.hit_id for i, case in enumerate(data["cases"]) if groups[i] in excluded}
+    if any(is_practice_hit(row["hit_id"]) or row["hit_id"] in blocked for row in labels):
+        ap.error("Practice hits and related groups are excluded from fine-tuning")
     idx, y_dec_g, y_code_g, rows = gold_targets(data["cases"], labels)
     if len(idx) < 10:
         raise SystemExit(f"only {len(idx)} usable labels; need at least 10")
