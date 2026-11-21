@@ -1,0 +1,17 @@
+# Hackathon data: participants only, never commit (see data/screening/BRIEF.md)
+data/screening/dev/
+data/screening/unseen/
+
+# ML environment and training outputs
+.venv/
+.venv-ml/
+artifacts/
+*.pt
+
+# Secrets
+.env
+
+# Python / OS noise
+__pycache__/
+*.pyc
+.DS_Store

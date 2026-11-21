@@ -1,0 +1,11 @@
+# screening_ml dependencies (separate from the Streamlit demo's requirements.txt)
+#
+# Windows + NVIDIA GPU (CUDA 12.6 wheels):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements-ml.txt
+# macOS on Apple Silicon (M1-M4, uses the MPS backend automatically):
+#   pip install -r requirements-ml.txt
+# Any machine without a GPU: same as macOS, runs on CPU (training takes seconds).
+torch>=2.4
+numpy>=1.26
+pyyaml>=6.0

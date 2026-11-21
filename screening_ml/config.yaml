@@ -1,0 +1,38 @@
+# Training config for screening_ml. Every key here is meant to be tuned.
+data_dir: data/screening/dev
+artifacts_dir: artifacts
+seed: 42
+device: auto               # auto | cuda | mps | cpu
+deterministic: true        # same results run to run (10% of the hackathon score)
+
+labels:
+  source: silver           # silver = SOP rule engine labels; gold labels stay held out for validation
+  exclude_gold_from_train: true
+  val_fraction: 0.15       # silver hold-out for early stopping
+
+model:
+  hidden: [128, 64]
+  dropout: 0.2
+
+train:
+  epochs: 300
+  batch_size: 64
+  lr: 0.002
+  weight_decay: 0.0001
+  patience: 30             # early stopping on silver validation loss
+  label_smoothing: 0.05
+  reason_weight: 0.5       # weight of the reason-code head loss
+  cost_weight: 0.05        # weight of the expected-cost term (official cost matrix)
+  balance_classes: true    # inverse-frequency class weights
+
+inference:
+  use_cost_matrix: true    # pick the decision with the lowest expected cost
+  clear_min_prob: 0.9      # never clear a hit unless P(DIFFERENT_ENTITY) >= this
+  rule_guard: true         # never clear a hit unless an SOP contradiction actually fired
+
+finetune:
+  labels: data/screening/dev/practice_labels.jsonl   # any file in practice_labels.jsonl format
+  epochs: 100
+  lr: 0.0003
+  freeze_backbone: true    # train only the heads (safer with few labels)
+  holdout_fraction: 0.3    # part of the new labels kept aside to measure the effect

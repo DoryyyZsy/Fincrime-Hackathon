@@ -1,6 +1,19 @@
 PYTHON ?= python3.11
+ML_DATA ?= data/screening/dev
 
-.PHONY: data match eval alerts app test
+.PHONY: data match eval alerts app test ml-check ml-train ml-predict ml-validate ml-finetune ml-all
+ml-check:
+	$(PYTHON) -m screening_ml.check_data --data $(ML_DATA)
+ml-train:
+	$(PYTHON) -m screening_ml.train
+ml-predict:
+	$(PYTHON) -m screening_ml.predict --data $(ML_DATA) --out output/dev.jsonl
+ml-validate:
+	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output output/dev.jsonl --score $(ML_DATA)/practice_labels.jsonl
+ml-finetune:
+	$(PYTHON) -m screening_ml.finetune
+ml-all: ml-check ml-train ml-predict ml-validate
+
 data:
 	$(PYTHON) -m src.load_list
 	$(PYTHON) -m src.synth
