@@ -305,7 +305,8 @@ def cmd_tests(args):
 
 
 def cmd_demo(args):
-    print(f"Starting the demo on http://127.0.0.1:{args.port}/staff.html (Ctrl+C to stop; loading takes ~15s)")
+    print(f"Starting the demo on http://127.0.0.1:{args.port}/ (screening review; also /staff.html and "
+          f"/management.html). Ctrl+C to stop; loading takes ~15s")
     return subprocess.call([sys.executable, "-m", "screening_ml.demo_server", "--data", args.data, "--port", str(args.port)], cwd=ROOT)
 
 

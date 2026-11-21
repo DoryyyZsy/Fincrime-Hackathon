@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Decision review</title>
+<title>Screening review</title>
 <style>
 :root{
   --bg:#f4f6fb;--bg2:#e9eefb;--panel:rgba(255,255,255,.86);--solid:#fff;--ink:#141821;--muted:#5b6475;--line:#dfe4ee;
@@ -21,207 +21,192 @@
 *{box-sizing:border-box}
 html,body{overflow-x:hidden}
 body{margin:0;color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;
-  background:radial-gradient(1200px 600px at 10% -10%,var(--bg2),transparent 60%),radial-gradient(900px 500px at 110% 10%,var(--bg2),transparent 60%),var(--bg)}
-.wrap{max-width:1280px;margin:0 auto;padding:20px 16px 60px}
-nav{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+  background:radial-gradient(1200px 600px at 10% -10%,var(--bg2),transparent 60%),var(--bg)}
+.wrap{max-width:1280px;margin:0 auto;padding:18px 16px 60px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#fff;font-weight:800}
-nav h1{font-size:18px;margin:0}
-.tag{font-size:11px;font-weight:600;background:var(--unk-bg);color:var(--muted);border-radius:6px;padding:2px 7px}
+header h1{font-size:19px;margin:0}
 .grow{flex:1}
-a.switch,button.go{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;text-decoration:none;border:0;border-radius:10px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
-button.ghost,select.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:7px 11px;font:inherit;cursor:pointer}
-.card{background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:16px}
-.grid{display:grid;grid-template-columns:minmax(320px,400px) 1fr;gap:18px;align-items:start}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.stat{border-radius:14px;padding:10px 12px;cursor:pointer;border:2px solid transparent;background:var(--solid)}
-.stat b{display:block;font-size:24px;line-height:1.1}.stat span{font-size:12px;color:var(--muted)}
-.stat.on{border-color:var(--accent)}
-.q-analyst b{color:var(--warn)}.q-mlro b{color:var(--match)}.q-qa b{color:var(--clear)}.q-all b{color:var(--info)}
-input,textarea,select{width:100%;font:inherit;color:var(--ink);background:var(--solid);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-textarea{min-height:76px;resize:vertical}
-.list{max-height:68vh;overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:6px}
-.row{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:12px;background:var(--solid);border:1px solid var(--line);cursor:pointer}
-.row:hover,.row.sel{border-color:var(--accent)}
-.row .t{flex:1;min-width:0}.row .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row small{color:var(--muted)}
-.dot{width:10px;height:10px;border-radius:50%;flex:none}
-.d-SAME_ENTITY{background:var(--match)}.d-REVIEW{background:var(--warn)}.d-DIFFERENT_ENTITY{background:var(--clear)}
-.badge{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;white-space:nowrap}
-.b-SAME_ENTITY{background:var(--match-bg);color:var(--match)}.b-REVIEW{background:var(--warn-bg);color:var(--warn)}.b-DIFFERENT_ENTITY{background:var(--clear-bg);color:var(--clear)}
-.head{position:relative;padding-right:150px}
-.head h2{margin:0 0 4px;font-size:20px}.meta{color:var(--muted);font-size:13px}
-.stamp{position:absolute;top:2px;right:4px;font-weight:900;font-size:17px;letter-spacing:.1em;padding:6px 12px;border:3px solid currentColor;border-radius:10px;transform:rotate(-8deg)}
-.st-SAME_ENTITY{color:var(--match)}.st-REVIEW{color:var(--warn)}.st-DIFFERENT_ENTITY{color:var(--clear)}
-h3{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:18px 0 8px}
-.reason{font-size:16px;line-height:1.55;background:var(--solid);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px}
-.chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{display:flex;align-items:center;gap:7px;border-radius:12px;padding:6px 10px;font-size:13px;font-weight:600}
-.chip small{font-weight:500;opacity:.85}
-.chip .i{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:11px;flex:none}
-.s-match{background:var(--match-bg);color:var(--match)}.s-match .i{background:var(--match)}
-.s-mismatch{background:var(--clear-bg);color:var(--clear)}.s-mismatch .i{background:var(--clear)}
-.s-warn{background:var(--warn-bg);color:var(--warn)}.s-warn .i{background:var(--warn)}
-.s-unknown{background:var(--unk-bg);color:var(--unk)}.s-unknown .i{background:var(--unk)}
-.s-info{background:var(--info-bg);color:var(--info)}.s-info .i{background:var(--info)}
-ul.todo{margin:0;padding-left:20px}ul.todo li{margin:4px 0}
-table{width:100%;border-collapse:collapse;font-size:13px;background:var(--solid);border-radius:12px;overflow:hidden}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--muted);font-weight:600;width:22%}
-details{background:var(--solid);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin-top:8px}
-summary{cursor:pointer;font-weight:600;font-size:13px}
-pre{white-space:pre-wrap;word-break:break-word;font-size:12px;margin:8px 0 0;color:var(--muted)}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
-.act{border:1px solid var(--line);background:var(--solid);color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
-.act.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.msg{margin-top:8px;font-size:14px}.ok{color:var(--clear)}.bad{color:var(--match)}
-.trail div{font-size:13px;padding:6px 0;border-bottom:1px dashed var(--line)}
+input,button{font:inherit}
+input{color:var(--ink);background:var(--solid);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+#reviewer{width:190px}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:7px 11px;cursor:pointer}
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.tab{background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:10px 14px;cursor:pointer;text-align:left;color:var(--ink)}
+.tab b{display:block;font-size:26px;line-height:1.1}.tab span{font-size:13px;color:var(--muted)}
+.tab.on{border-color:var(--accent);box-shadow:var(--shadow)}
+.t-mlro b{color:var(--match)}.t-analyst b{color:var(--warn)}.t-spot b{color:var(--info)}.t-closed b{color:var(--clear)}
+.grid{display:grid;grid-template-columns:minmax(300px,360px) 1fr;gap:16px;align-items:start}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:14px}
+.list{max-height:72vh;overflow:auto;display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.al{padding:10px 12px;border-radius:12px;background:var(--solid);border:1px solid var(--line);cursor:pointer}
+.al:hover,.al.sel{border-color:var(--accent)}
+.al b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.al small{color:var(--muted)}
+.pills{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.pill{font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px}
+.p-SAME_ENTITY{background:var(--match-bg);color:var(--match)}.p-REVIEW{background:var(--warn-bg);color:var(--warn)}.p-DIFFERENT_ENTITY{background:var(--clear-bg);color:var(--clear)}
+.ahead h2{margin:0;font-size:21px}.ahead p{margin:2px 0 12px;color:var(--muted);font-size:14px}
+.hit{border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;background:var(--solid)}
+.hit-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.verdict{font-weight:800;font-size:13px;border-radius:8px;padding:3px 10px}
+.v-SAME_ENTITY{background:var(--match-bg);color:var(--match)}.v-REVIEW{background:var(--warn-bg);color:var(--warn)}.v-DIFFERENT_ENTITY{background:var(--clear-bg);color:var(--clear)}
+.listed{font-weight:700}.cat{color:var(--muted);font-size:13px}
+.state{margin-left:auto;font-size:12px;color:var(--muted)}
+.summary{font-size:17px;font-weight:600;margin:10px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+td.f{color:var(--muted);width:20%}
+.vd{font-weight:700;white-space:nowrap}
+.vd-same{color:var(--ink)}.vd-different{color:var(--ink)}.vd-unknown{color:var(--unk)}.vd-partly{color:var(--unk)}
+.todo{margin:10px 0 0;padding:10px 12px 10px 28px;background:var(--warn-bg);border-radius:10px;font-size:14px}
+.todo li{margin:2px 0}
+.steps{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.step{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 12px;cursor:pointer;font-weight:600;font-size:14px}
+.step:hover{border-color:var(--accent)}
+.step.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.confirm{margin-top:10px;padding:10px 12px;border-left:4px solid var(--accent);background:var(--info-bg);border-radius:8px;font-size:13px;display:none}
+.confirm.show{display:block}
+.confirm .row{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
+.go{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:0;border-radius:10px;padding:8px 14px;font-weight:700;cursor:pointer}
+.ovr{display:inline-block;background:var(--warn-bg);color:var(--warn);font-weight:800;font-size:11px;border-radius:6px;padding:1px 6px;margin-right:6px}
+.msg{font-size:13px;margin-top:6px}.ok{color:var(--clear)}.bad{color:var(--match)}
+details{margin-top:10px;font-size:13px}summary{cursor:pointer;color:var(--accent);font-weight:600}
+pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted);background:var(--bg);border-radius:8px;padding:8px;margin:6px 0}
+.trail div{padding:4px 0;border-bottom:1px dashed var(--line)}
 .empty{text-align:center;color:var(--muted);padding:60px 20px}
 .hint{font-size:12px;color:var(--muted)}
-@media (max-width:900px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.head{padding-right:0}.stamp{position:static;display:inline-block;margin-bottom:8px}}
+@media (max-width:900px){.grid{grid-template-columns:1fr}.tabs{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <nav>
-    <div class="logo">⚖</div><h1>Decision review <span class="tag">Analyst · MLRO · QA</span></h1>
+  <header>
+    <div class="logo">✓</div><h1>Screening review</h1>
     <span class="grow"></span>
-    <label class="hint" for="role">I am</label>
-    <select class="ghost" id="role" style="width:auto"><option value="analyst">Analyst</option><option value="mlro">MLRO</option><option value="qa">QA</option></select>
-    <button class="ghost" id="theme" title="Toggle theme">◐</button>
-    <a class="switch" href="staff.html">Staff check</a>
-    <a class="switch" href="management.html">Management</a>
-  </nav>
+    <label class="hint" for="reviewer">Reviewer</label><input id="reviewer" placeholder="Your name">
+    <button class="ghost" id="theme" title="Light / dark">◐</button>
+  </header>
+  <div class="tabs" id="tabs"></div>
   <div class="grid">
     <section class="card">
-      <div class="stats" id="stats"></div>
-      <input id="search" placeholder="Search hit, alert, customer or listed name">
+      <input id="search" placeholder="Search customer, listed name or ID" style="width:100%">
       <div class="list" id="list"></div>
     </section>
-    <section class="card" id="detail"><div class="empty"><b>Pick a hit</b><br>Its decision, the reason, what to check and the records behind it appear here.</div></section>
+    <section class="card" id="detail"><div class="empty">Pick an alert on the left.</div></section>
   </div>
-  <p class="hint">Routing: confirmed matches go straight to the MLRO; uncertain hits go to an analyst, who can escalate; clearances close automatically, with a fixed 5% QA sample. Every action is recorded with the reviewer's name and a reason the system writes from the data and POLICY.md (overrides of what the data supports are flagged), UTC-stamped, in a local append-only audit log. This page shows customer data: keep the server local.</p>
+  <p class="hint">Confirmed matches go to the MLRO. Hits the system cannot decide go to an analyst. Clearances close on their own; a fixed 5% are spot-checked. The reason saved with each action is written by the system from the data and the policy. Customer data: keep this server on your own machine.</p>
 </div>
 <script>
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const ICON = {match:"!", mismatch:"✓", warn:"!", unknown:"?", info:"i"};
-const LABEL = {SAME_ENTITY:"MATCH", REVIEW:"REVIEW", DIFFERENT_ENTITY:"CLEAR"};
-const QUEUES = [["analyst","Analyst queue"],["mlro","MLRO queue"],["qa","QA sample"],["all","All hits"]];
-let items = [], view = "analyst", current = null, chosenAction = null;
+const VERDICT = {SAME_ENTITY: "Same person", REVIEW: "Can't decide", DIFFERENT_ENTITY: "Different person"};
+const VD = {same: "✓ Same", different: "✗ Different", unknown: "? Unknown", partly: "≈ Partly"};
+const TABS = [["mlro", "Needs MLRO"], ["analyst", "Needs analyst"], ["spot", "Spot-check"], ["closed", "Done"]];
+const STATE = {analyst: "Waiting for analyst", mlro: "Waiting for MLRO", qa: "Spot-check", done: "Done"};
+let alerts = [], tab = "mlro", current = null;
 
-try { const t = localStorage.getItem("screening-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+try { const t = localStorage.getItem("screening-theme"); if (t) document.documentElement.dataset.theme = t;
+      $("#reviewer").value = localStorage.getItem("screening-reviewer") || ""; } catch (e) {}
+$("#reviewer").oninput = () => { try { localStorage.setItem("screening-reviewer", $("#reviewer").value); } catch (e) {} };
 $("#theme").onclick = () => {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const cur = document.documentElement.dataset.theme || (dark ? "dark" : "light");
   document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
   try { localStorage.setItem("screening-theme", document.documentElement.dataset.theme); } catch (e) {}
 };
-$("#role").onchange = () => { view = $("#role").value; renderList(); if (current) renderDetail(current); };
 
-async function loadQueue() {
-  items = await (await fetch("/api/review/queue")).json();
-  renderList();
+async function load() {
+  alerts = await (await fetch("/api/review/alerts")).json();
+  renderTabs(); renderList();
+}
+function renderTabs() {
+  const n = {mlro: 0, analyst: 0, spot: 0, closed: 0};
+  alerts.forEach(a => n[a.stage]++);
+  $("#tabs").innerHTML = TABS.map(([k, l]) =>
+    `<button class="tab t-${k} ${tab === k ? "on" : ""}" data-k="${k}"><b>${n[k]}</b><span>${l} · alerts</span></button>`).join("");
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.k; renderTabs(); renderList(); });
 }
 function renderList() {
-  const counts = {analyst:0, mlro:0, qa:0, all:items.length};
-  items.forEach(i => { if (counts[i.queue] !== undefined) counts[i.queue]++; });
-  $("#stats").innerHTML = QUEUES.map(([k, l]) =>
-    `<div class="stat q-${k} ${view === k ? "on" : ""}" data-q="${k}"><b>${counts[k]}</b><span>${l}</span></div>`).join("");
-  document.querySelectorAll(".stat").forEach(el => el.onclick = () => { view = el.dataset.q; renderList(); });
   const q = $("#search").value.trim().toLowerCase();
-  const rows = items.filter(i => (view === "all" || i.queue === view) &&
-    (!q || [i.hit_id, i.alert_id, i.screened, i.listed].join(" ").toLowerCase().includes(q)));
-  $("#list").innerHTML = rows.length ? rows.slice(0, 400).map(i => `
-    <div class="row ${current && current.hit_id === i.hit_id ? "sel" : ""}" data-id="${esc(i.hit_id)}">
-      <span class="dot d-${esc(i.decision)}"></span>
-      <div class="t"><div><b>${esc(i.screened)}</b> <small>vs</small> ${esc(i.listed)}</div>
-        <small>${esc(i.hit_id)} · ${esc(i.category || "—")} · ${esc(i.code)} · ${esc(i.status)}</small></div>
-      <span class="badge b-${esc(i.decision)}">${LABEL[i.decision]}</span></div>`).join("")
-    : `<div class="empty">Nothing in this queue.</div>`;
-  document.querySelectorAll(".row").forEach(el => el.onclick = () => openHit(el.dataset.id));
+  const rows = alerts.filter(a => a.stage === tab && (!q ||
+    [a.alert_id, a.customer, ...a.hits.map(h => h.listed + " " + h.hit_id)].join(" ").toLowerCase().includes(q)));
+  $("#list").innerHTML = rows.length ? rows.slice(0, 500).map(a => {
+    const c = {};
+    a.hits.forEach(h => c[h.decision] = (c[h.decision] || 0) + 1);
+    return `<div class="al ${current === a.alert_id ? "sel" : ""}" data-id="${esc(a.alert_id)}">
+      <b>${esc(a.customer)}</b><small>${esc(a.alert_id)} · ${a.hits.length} hit${a.hits.length > 1 ? "s" : ""}</small>
+      <div class="pills">${Object.entries(c).map(([d, k]) => `<span class="pill p-${d}">${k} ${VERDICT[d]}</span>`).join("")}</div></div>`;
+  }).join("") : `<div class="empty">Nothing here.</div>`;
+  document.querySelectorAll(".al").forEach(el => el.onclick = () => openAlert(el.dataset.id));
 }
 $("#search").oninput = renderList;
 
-async function openHit(id) {
-  const r = await fetch("/api/review/hit?id=" + encodeURIComponent(id));
-  current = await r.json();
-  chosenAction = null;
-  renderDetail(current);
-  renderList();
-}
-function factRows(d) {
-  const c = d.customer || {}, h = d.hit || {};
-  const dob = c.dob ? `${c.dob.value} (${c.dob.verified ? "verified" : "declared"}; ${(c.dob.source || []).join(", ")})` : "—";
-  const countries = Object.entries(c.countries || {}).map(([k, v]) => `${k} (${v.join(", ")})`).join(", ") || "—";
-  return [
-    ["Name(s)", (c.names || []).join(", ") || "—", (h.names || []).join(", ") || "—"],
-    ["Verified name", c.verified_name ? `${c.verified_name.value} (${c.verified_name.source.join(", ")})` : "—", "—"],
-    ["Date of birth", dob, `${(h.dobs || []).join(" or ") || "—"} (from ${h.dob_source || "none"})`],
-    ["Countries", countries, (h.countries || []).join(", ") || "—"],
-    ["Type", c.entity_type || "—", h.entity_type || "—"],
-    ["Records / checks", `${(c.records || []).join(", ") || "—"}; ${c.approved_checks || 0} approved, ${c.rejected_checks || 0} rejected`, `${h.category || "—"}${h.position ? " · " + h.position : ""}`],
-    ["Earliest report / death", "—", `${h.earliest_report || "—"} / ${h.deceased || "—"}`],
-  ].map(([f, a, b]) => `<tr><th>${esc(f)}</th><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("");
-}
-function renderDetail(d) {
-  const role = $("#role").value, acts = d.actions[role];
-  const s = d.screened_details || {};
+async function openAlert(id) {
+  current = id; renderList();
+  const a = alerts.find(x => x.alert_id === id);
+  const hits = await Promise.all(a.hits.map(h => fetch("/api/review/hit?id=" + encodeURIComponent(h.hit_id)).then(r => r.json())));
+  const open = hits.some(h => h.decision !== "DIFFERENT_ENTITY");
   $("#detail").innerHTML = `
-    <div class="head">
-      <span class="stamp st-${esc(d.decision)}">${LABEL[d.decision]}</span>
-      <h2>${esc(s.name)} <small class="meta">vs</small> ${esc(d.hit && d.hit.name)}</h2>
-      <div class="meta">${esc(d.hit_id)} · alert ${esc(d.alert_id)} (${d.alert_open ? "open" : "closes when cleared"}) · screened ${esc(d.screened_at)} ·
-        customer ${esc(d.customer_record_id || "not found")} via ${esc(d.link_type)} · code <b>${esc(d.code)}</b> · status <b>${esc(d.status)}</b> · queue <b>${esc(d.queue)}</b></div>
-    </div>
-    <h3>Why the system decided this</h3>
-    <div class="reason">${esc(d.reason)}</div>
-    <h3>Evidence</h3>
-    <div class="chips">${(d.chips || []).map(c => `<span class="chip s-${esc(c.status)}"><span class="i">${ICON[c.status] || "·"}</span>${esc(c.label)} <small>${esc(c.detail)}</small></span>`).join("")}</div>
-    <h3>What to check</h3>
-    <ul class="todo">${(d.guidance || []).map(g => `<li>${esc(g)}</li>`).join("")}</ul>
-    <h3>Facts compared</h3>
-    <table><tr><th>Fact</th><th>Customer</th><th>Watchlist hit</th></tr>${factRows(d)}</table>
-    <details><summary>Policy checks</summary><table>${(d.checks || []).map(c => `<tr><th>${esc(c.label)}</th><td>${c.holds ? "✓ holds" : ""}</td></tr>`).join("")}</table></details>
-    <details open><summary>Records cited (${(d.records || []).length})</summary>${(d.records || []).map(r => `<div><b>${esc(r.id)}</b><pre>${esc(JSON.stringify(r.record, null, 2))}</pre></div>`).join("") || "<pre>none</pre>"}</details>
-    ${(d.other_people || []).length ? `<details><summary>Other people who fit the alert</summary><pre>${esc(JSON.stringify(d.other_people, null, 2))}</pre></details>` : ""}
-    ${((d.hit || {}).source_urls || []).length ? `<details><summary>List sources</summary>${d.hit.source_urls.map(u => `<pre>${esc(u)}</pre>`).join("")}</details>` : ""}
-    <h3>Your decision (${esc($("#role").selectedOptions[0].text)})</h3>
-    <div class="actions">${Object.entries(acts).map(([k, l]) => `<button class="act" data-a="${esc(k)}">${esc(l)}</button>`).join("")}</div>
-    <div class="hint">Reason recorded in the audit log (generated from the data and POLICY.md, not typed):</div>
-    <div class="reason" id="gen" style="font-size:14px;margin-top:6px">Choose an action to see the reason that will be recorded.</div>
-    <div class="row2" style="margin-top:8px"><input id="reviewer" placeholder="Your name (required)"><span></span></div>
-    <textarea id="note" placeholder="Optional note: only information that is not in the files (e.g. a call with the customer)" style="margin-top:8px;min-height:56px"></textarea>
-    <button class="go" id="record" style="margin-top:8px">Record decision</button>
-    <div class="msg" id="msg"></div>
-    <h3>Audit trail</h3>
-    <div class="trail">${(d.trail || []).slice().reverse().map(t => `<div>${esc(t.timestamp)} · ${esc(t.role)} · ${esc(t.reviewer)} · <b>${esc(t.action)}</b>${t.override ? ' <span class="badge b-REVIEW">OVERRIDE</span>' : ""}<br>${esc(t.reason)}${t.note ? `<br><i>Note: ${esc(t.note)}</i>` : ""}</div>`).join("") || '<div class="hint">No human action yet.</div>'}</div>`;
-  try { $("#reviewer").value = localStorage.getItem("screening-reviewer") || ""; } catch (e) {}
-  document.querySelectorAll(".act").forEach(b => b.onclick = () => {
-    chosenAction = b.dataset.a; document.querySelectorAll(".act").forEach(x => x.classList.toggle("on", x === b));
-    const text = d.action_reasons[role][chosenAction];
-    $("#gen").innerHTML = (text.includes("OVERRIDE") ? '<span class="badge b-REVIEW">OVERRIDE</span> ' : "") + esc(text); });
-  $("#record").onclick = record;
+    <div class="ahead"><h2>${esc(a.customer)}</h2>
+      <p>Alert ${esc(a.alert_id)} · ${hits.length} watchlist hit${hits.length > 1 ? "s" : ""} ·
+      ${open ? "stays open until every hit is cleared" : "every hit is cleared, so the alert closes"}</p></div>
+    ${hits.map(hitCard).join("")}`;
+  hits.forEach(wire);
 }
-async function record() {
-  const msg = $("#msg");
-  if (!chosenAction) { msg.className = "msg bad"; msg.textContent = "Choose an action first."; return; }
-  const body = {hit_id: current.hit_id, role: $("#role").value, action: chosenAction,
-                reviewer: $("#reviewer").value, note: $("#note").value};
-  try { localStorage.setItem("screening-reviewer", body.reviewer); } catch (e) {}
-  const r = await (await fetch("/api/review/action", {method: "POST", headers: {"Content-Type": "application/json"},
-                                                        body: JSON.stringify(body)})).json();
-  if (r.error) { msg.className = "msg bad"; msg.textContent = r.error; return; }
-  await loadQueue();
-  await openHit(current.hit_id);
-  $("#msg").className = "msg ok"; $("#msg").textContent = "Recorded: " + r.status + ".";
+function hitCard(d) {
+  const h = d.hit || {};
+  return `<div class="hit" id="h-${esc(d.hit_id)}">
+    <div class="hit-top"><span class="verdict v-${esc(d.decision)}">${VERDICT[d.decision]}</span>
+      <span class="listed">${esc(h.name || d.listed)}</span><span class="cat">${esc(h.category || "")}</span>
+      <span class="state">${esc(STATE[d.queue] || d.queue)}${d.status && d.status !== "New" ? " · " + esc(d.status) : ""}</span></div>
+    <div class="summary">${esc(d.summary)}</div>
+    <table><tr><th></th><th>Customer</th><th>Listed person</th><th></th></tr>
+      ${(d.facts || []).map(f => `<tr><td class="f">${esc(f.fact)}</td><td>${esc(f.customer)}</td><td>${esc(f.listed)}</td>
+        <td class="vd vd-${esc(f.verdict)}">${VD[f.verdict] || ""}</td></tr>`).join("")}</table>
+    ${d.decision !== "DIFFERENT_ENTITY" && (d.guidance || []).length ? `<ul class="todo">${d.guidance.map(g => `<li>${esc(g)}</li>`).join("")}</ul>` : ""}
+    <div class="steps">${(d.steps || []).map((s, i) => `<button class="step" data-i="${i}">${esc(s.label)}</button>`).join("")}</div>
+    <div class="confirm"><div class="why"></div>
+      <div class="row"><button class="go">Save</button><span class="hint">Saved with your name and the time.</span></div>
+      <div class="msg"></div></div>
+    <details><summary>Details: full reason, source records, history</summary>
+      <p>${esc(d.reason)}</p>
+      ${(d.records || []).map(r => `<b>${esc(r.id)}</b><pre>${esc(JSON.stringify(r.record, null, 2))}</pre>`).join("")}
+      ${(h.source_urls || []).length ? `<b>List sources</b>${h.source_urls.map(u => `<pre>${esc(u)}</pre>`).join("")}` : ""}
+      <b>History</b><div class="trail">${(d.trail || []).slice().reverse().map(t =>
+        `<div>${esc(t.timestamp.slice(0, 16).replace("T", " "))} · ${esc(t.reviewer)} (${esc(t.role)}): ${t.override ? '<span class="ovr">OVERRIDE</span>' : ""}${esc(t.reason)}</div>`).join("") || '<div class="hint">No action yet.</div>'}</div>
+    </details></div>`;
+}
+function wire(d) {
+  const card = document.getElementById("h-" + d.hit_id);
+  let chosen = null;
+  card.querySelectorAll(".step").forEach(b => b.onclick = () => {
+    chosen = d.steps[+b.dataset.i];
+    card.querySelectorAll(".step").forEach(x => x.classList.toggle("on", x === b));
+    card.querySelector(".confirm").classList.add("show");
+    card.querySelector(".why").innerHTML = "<b>Reason that will be saved:</b><br>" +
+      (chosen.reason.includes("OVERRIDE") ? '<span class="ovr">OVERRIDE</span>' : "") + esc(chosen.reason);
+    card.querySelector(".msg").textContent = "";
+  });
+  card.querySelector(".go").onclick = async () => {
+    const msg = card.querySelector(".msg");
+    const reviewer = $("#reviewer").value.trim();
+    if (!reviewer) { msg.className = "msg bad"; msg.textContent = "Type your name at the top first."; $("#reviewer").focus(); return; }
+    const r = await (await fetch("/api/review/action", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({hit_id: d.hit_id, role: chosen.role, action: chosen.action, reviewer})})).json();
+    if (r.error) { msg.className = "msg bad"; msg.textContent = r.error; return; }
+    const keep = current;
+    await load(); await openAlert(keep);
+    const c2 = document.getElementById("h-" + d.hit_id);
+    if (c2) { c2.querySelector(".confirm").classList.add("show"); const m = c2.querySelector(".msg"); m.className = "msg ok"; m.textContent = "Saved: " + r.status + "."; }
+  };
 }
 const params = new URLSearchParams(location.search);
-loadQueue().then(() => {
-  const id = params.get("hit");
-  const item = items.find(i => i.hit_id === id);
-  if (item && ["analyst", "mlro", "qa"].includes(item.queue)) { $("#role").value = item.queue; view = item.queue; }
-  if (id) openHit(id);
+load().then(() => {
+  const id = params.get("alert");
+  const a = alerts.find(x => x.alert_id === id);
+  if (a) { tab = a.stage; renderTabs(); renderList(); openAlert(id); }
 });
 </script>
 </body>

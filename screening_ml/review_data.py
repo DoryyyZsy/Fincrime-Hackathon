@@ -216,6 +216,112 @@ def action_reason(d, role, action):
     return f"{hid}: {action} by {role}."
 
 
+def _years(dates):
+    ys = sorted({d[0] for d in dates if d})
+    return " or ".join(str(y) for y in ys) if len(ys) <= 2 else f"{ys[0]}-{ys[-1]}"
+
+
+def plain_summary(case):
+    """One short sentence a reviewer can read in two seconds. Facts only, no policy wording."""
+    if case.teacher_code == "AMBIGUOUS_CUSTOMER_RECORD":
+        return f"Can't decide yet: {len(case.comparisons)} customers fit this alert and they give different answers."
+    if not case.comparisons:
+        return "Can't decide yet: the alert does not lead to a customer record."
+    comp = case.comparisons[0]
+    p, h, chk = comp.person, comp.hit, comp.checks
+    cust_dob = N.fmt_date(p.dob.value) if p.dob else None
+    cust_c, hit_c = ", ".join(sorted(p.countries)), ", ".join(sorted(h.countries))
+    code = case.teacher_code
+    if code == "ENTITY_TYPE_MISMATCH":
+        return "Different: one is a person, the other a company."
+    if code == "DECEASED":
+        return f"Different: the listed person died ({N.fmt_date(h.deceased)}) before the customer was screened."
+    if code == "TEMPORAL_IMPOSSIBILITY":
+        return (f"Different: the customer (born {p.dob.value[0]}) was a child when the listed person was first "
+                f"reported ({N.fmt_date(h.earliest_report)}).")
+    if code == "DOB_MISMATCH":
+        return f"Different: customer born {cust_dob}, listed person born {_years(h.dobs) if h.dob_source != 'field' else ', '.join(N.fmt_date(d) for d in h.dobs)}."
+    if code == "LOCATION_MISMATCH":
+        return f"Different: customer linked to {cust_c}; listed person only to {hit_c}."
+    if code == "NAME_MISMATCH_VERIFIED":
+        vn = getattr(p.verified_name, "raw", None) or " ".join(p.verified_name.value).title()
+        return f"Different: the customer's ID shows {vn}, which is not {h.names[0][0]}."
+    if case.teacher_decision == "SAME_ENTITY":
+        bits = ["name"]
+        if comp.dob_agree:
+            bits.append(f"date of birth ({cust_dob})")
+        if comp.country_overlap:
+            bits.append(f"country ({', '.join(sorted(comp.country_overlap))})")
+        if len(bits) == 1:
+            return "Same person: the name matches and nothing contradicts it."
+        return ("Same person: " + ", ".join(bits[:-1]) + " and " + bits[-1]
+                + (" both match." if len(bits) == 2 else " all match."))
+    gaps = []
+    if not h.dobs:
+        gaps.append("the listed person has no date of birth" if not getattr(h, "dob_withheld", False)
+                    else "the listed person's age could not be read")
+    elif not p.dob:
+        gaps.append("the customer's date of birth is unknown")
+    elif not comp.dob_agree:
+        gaps.append("the dates of birth only partly line up")
+    if not comp.name_agree:
+        gaps.append("the names only partly match")
+    if p.countries and h.countries and not comp.country_overlap and comp.name_agree and comp.dob_agree:
+        gaps.append("name and birth date match but the countries differ")
+    lead = "names match" if comp.name_agree else "possible name match"
+    return f"Can't decide yet: {lead}, but " + (" and ".join(gaps) or "nothing confirms or rules it out") + "."
+
+
+def fact_rows(case):
+    """Side-by-side facts with a neutral verdict per row: same / different / unknown."""
+    if not case.comparisons:
+        return []
+    comp = case.comparisons[0]
+    p, h, chk = comp.person, comp.hit, comp.checks
+    rows = []
+    rows.append({"fact": "Name", "customer": ", ".join(sorted({" ".join(f.value).title() for f in p.names})[:2]) or "-",
+                 "listed": h.names[0][0] if h.names else "-",
+                 "verdict": "same" if comp.name_agree else "partly"})
+    if p.verified_name:
+        vn = getattr(p.verified_name, "raw", None) or " ".join(p.verified_name.value).title()
+        rows.append({"fact": "Name on ID", "customer": f"{vn} ({', '.join(p.verified_name.sources)})",
+                     "listed": h.names[0][0] if h.names else "-",
+                     "verdict": "different" if chk["NAME_MISMATCH_VERIFIED"].fired else "same"})
+    dob_listed = (" or ".join(N.fmt_date(d) for d in h.dobs) + f" (from {h.dob_source})") if h.dobs else (
+        "could not be read" if getattr(h, "dob_withheld", False) else "not given")
+    rows.append({"fact": "Date of birth",
+                 "customer": (f"{N.fmt_date(p.dob.value)} ({'ID verified' if p.dob_verified else 'declared'})"
+                              if p.dob else "unknown"),
+                 "listed": dob_listed,
+                 "verdict": "same" if comp.dob_agree else "different" if comp.dob_contra else "unknown"})
+    rows.append({"fact": "Country", "customer": ", ".join(sorted(p.countries)) or "unknown",
+                 "listed": ", ".join(sorted(h.countries)) or "unknown",
+                 "verdict": "same" if comp.country_overlap else
+                            ("different" if p.countries and h.countries else "unknown")})
+    if chk["TEMPORAL_IMPOSSIBILITY"].fired or h.earliest_report:
+        rows.append({"fact": "Age at first report", "customer": "-", "listed": N.fmt_date(h.earliest_report) or "-",
+                     "verdict": "different" if chk["TEMPORAL_IMPOSSIBILITY"].fired else "unknown"})
+    if chk["ENTITY_TYPE_MISMATCH"].fired:
+        rows.append({"fact": "Type", "customer": p.entity_type, "listed": h.entity_type, "verdict": "different"})
+    if chk["DECEASED"].fired:
+        rows.append({"fact": "Died", "customer": "-", "listed": N.fmt_date(h.deceased), "verdict": "different"})
+    return rows
+
+
+# What a reviewer can do, by where the hit is now. Keys map to ACTIONS / action_reason roles.
+NEXT_STEPS = {
+    "analyst": [("analyst", "clear", "Clear - different person"),
+                ("analyst", "confirm_escalate", "Confirm match - send to MLRO"),
+                ("analyst", "request_info", "Need more information")],
+    "mlro": [("mlro", "mlro_confirm", "Confirm match - act on it"),
+             ("mlro", "mlro_clear", "Not a match - clear"),
+             ("mlro", "return", "Send back to analyst")],
+    "qa": [("qa", "qa_ok", "Spot-check: clearance is right"),
+           ("qa", "qa_reopen", "Spot-check: reopen")],
+    "done": [("qa", "qa_reopen", "Reopen")],
+}
+
+
 def _person(p):
     if p is None:
         return None
@@ -274,6 +380,7 @@ class ReviewBook:
                     "screened_details": alert.get("customer") or {}, "screened_at": alert.get("screened_at"),
                     "chips": present(case, raw)["evidence"] if comp else [],
                     "guidance": guidance(case, raw),
+                    "summary": plain_summary(case), "facts": fact_rows(case),
                     "customer": _person(comp.person) if comp and res.persons else None,
                     "other_people": [_person(c.person) for c in case.comparisons[1:]],
                     "hit": _hit(comp.hit, raw) if comp else None,
@@ -311,15 +418,39 @@ class ReviewBook:
             return None
         trail = [r for r in self.audit() if r["hit_id"] == hit_id]
         status = trail[-1]["action"] if trail else None
-        reasons = {role: {a: action_reason(d, role, a) for a in acts} for role, acts in ACTIONS.items()}
-        return {**d, "trail": trail, "status": STATUS.get(status, status),
-                "queue": current_queue(d["route"], d["qa_sample"], status), "actions": ACTIONS, "action_reasons": reasons}
+        queue = current_queue(d["route"], d["qa_sample"], status)
+        steps = [{"role": r, "action": a, "label": label, "reason": action_reason(d, r, a)}
+                 for r, a, label in NEXT_STEPS[queue]]
+        return {**d, "trail": trail, "status": STATUS.get(status, status), "queue": queue, "steps": steps}
+
+    def alerts(self):
+        """One row per alert: who it is, where it stands, and a one-line summary of each hit."""
+        by_alert = {}
+        for item in self.queue():
+            a = by_alert.setdefault(item["alert_id"], {"alert_id": item["alert_id"], "customer": item["screened"],
+                                                         "hits": []})
+            a["hits"].append({"hit_id": item["hit_id"], "listed": item["listed"], "decision": item["decision"],
+                              "queue": item["queue"], "status": item["status"],
+                              "summary": self.detail[item["hit_id"]]["summary"]})
+        out = []
+        for a in by_alert.values():
+            qs = {h["queue"] for h in a["hits"]}
+            a["stage"] = "mlro" if "mlro" in qs else "analyst" if "analyst" in qs else "spot" if "qa" in qs else "closed"
+            a["open"] = any(h["decision"] != "DIFFERENT_ENTITY" for h in a["hits"]) and a["stage"] != "closed"
+            out.append(a)
+        order = {"mlro": 0, "analyst": 1, "spot": 2, "closed": 3}
+        return sorted(out, key=lambda a: (order[a["stage"]], a["alert_id"]))
 
     def act(self, form):
         hit_id, role, action = form.get("hit_id"), form.get("role"), form.get("action")
         reviewer, note = (form.get("reviewer") or "").strip()[:80], (form.get("note") or "").strip()[:1000]
         if hit_id not in self.detail or role not in ACTIONS or action not in ACTIONS[role]:
             return {"error": "Unknown hit, role or action."}
+        trail = [r for r in self.audit() if r["hit_id"] == hit_id]
+        queue = current_queue(self.detail[hit_id]["route"], self.detail[hit_id]["qa_sample"],
+                              trail[-1]["action"] if trail else None)
+        if (role, action) not in {(r, a) for r, a, _ in NEXT_STEPS[queue]}:
+            return {"error": "That action is not available for this hit right now."}
         if not reviewer:
             return {"error": "Enter your name: the audit log records who acted."}
         d = self.detail[hit_id]

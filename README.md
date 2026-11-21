@@ -43,7 +43,7 @@ python inspector.py explain H-D861DA               # one hit: decision, reason, 
 python inspector.py check "Elvira Velasco Morillo" --dob 1968-03-05 --country Spain
                                                    # screen a new customer in the terminal, evidence by evidence
 python inspector.py tests
-python inspector.py demo                           # the web pages, at http://127.0.0.1:8765/staff.html
+python inspector.py demo                           # the web pages, at http://127.0.0.1:8765/
 ```
 
 `verify` and `run` force rules only (`SCREENING_LLM=0`) unless you add `--with-llm`. The submitted command
@@ -235,12 +235,24 @@ so nothing contradicts it and nothing confirms it.
 ## Demo pages
 
 ```
-python inspector.py demo          # or: python -m screening_ml.demo_server; then open http://127.0.0.1:8765
+python inspector.py demo          # or: python -m screening_ml.demo_server; then open http://127.0.0.1:8765/
 ```
 
 The server is standard library only and binds to 127.0.0.1. The pages show customer data, so never expose them.
-Every page has buttons to switch between them.
+The start page is the screening review; the staff and management pages have buttons to switch between all three.
 
+- **Screening review** (`/review.html`, the start page): one page, organised by alert. Tabs show how many alerts
+  need the MLRO, need an analyst, are in the 5% spot-check, or are done. Each hit opens with a one-line plain
+  summary ("Different: customer born 1973-12-26, listed person born 1992 or 1993.") and a side-by-side table of
+  name, name on ID, date of birth and country, each marked Same / Different / Unknown. Open hits also show what
+  to check. The buttons depend on where the hit is:
+  - an analyst can clear it, confirm it and send it to the MLRO, or ask for more information;
+  - the MLRO can confirm and act, clear it, or send it back.
+
+  The reason saved with each action is written by the system from the facts and POLICY.md, and an action
+  against what the data supports is marked OVERRIDE. The reviewer only types their name. Actions are appended,
+  UTC-stamped, to `data/screening/review/audit_log.jsonl`, which is git-ignored. `?alert=A-xxxxxx` opens one
+  alert.
 - **Staff check** (`/staff.html`): type a customer's details, or pick a demo customer, and press *Run check*.
   Each matching watchlist profile appears as a card. Its evidence animates in one item at a time ("Name
   matched", "DOB matched", "Country doesn't match", "Too young at the time", "Held for safety"), then an
@@ -249,10 +261,6 @@ Every page has buttons to switch between them.
   hit it shows the trail to the customer, the customer and the hit side by side, every policy check, and the
   cited records. **Edit hit list** lets you mark hits Cleared / Same entity / Review, remove and restore hits,
   and export the edited list.
-- **Decision review** (`/review.html`): work queues. `SAME_ENTITY` goes to the MLRO; `REVIEW` goes to an
-  analyst; clears close automatically, with a fixed 5% QA sample. Each action needs the reviewer's name. The
-  reviewer's reason is generated from the facts, and actions are appended, timestamped, to
-  `data/screening/review/audit_log.jsonl`, which is git-ignored.
 
 `python -m screening_ml.analyst_view` writes the management page as a single offline file,
 `artifacts/analyst_view.html`, which is git-ignored.
