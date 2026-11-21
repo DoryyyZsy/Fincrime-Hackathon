@@ -2,9 +2,9 @@
 
 **Project team**
 
-- Dory Zhu — [dorothy.zhu.i.am@gmail.com](mailto:dorothy.zhu.i.am@gmail.com)
-- Jennifer Liu
-- Yiding Wang — [yxw1265@student.bham.ac.uk](mailto:yxw1265@student.bham.ac.uk)
+- Dory Zhu — dorothy.zhu26@imperial.ac.uk
+- Jennifer Liu jennifer.liu26@imperial.ac.uk
+- Yiding Wang — yiding.wang26@imperial.ac.uk
 
 For every sanctions, PEP, enforcement or adverse-media hit raised against a customer, `system/run` decides
 whether the hit **is the customer** (`SAME_ENTITY`), **someone else** (`DIFFERENT_ENTITY`), or **needs a
