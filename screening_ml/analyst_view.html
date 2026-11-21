@@ -81,6 +81,19 @@ button.p{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:
 button.s{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer}
 textarea{width:100%;min-height:54px;margin-top:8px}
 .empty{color:var(--muted);padding:40px;text-align:center}
+.tag{font-size:11px;font-weight:600;background:var(--soft);color:var(--muted);border-radius:6px;padding:2px 7px;vertical-align:middle}
+a.switch{background:var(--accent);color:#fff;text-decoration:none;border-radius:8px;padding:7px 14px;font-weight:600}
+a.switch:hover{filter:brightness(1.1)}
+#editBtn[aria-pressed=true]{background:var(--ink);color:var(--panel)}
+.editbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 20px;background:var(--hold-bg);border-bottom:1px solid var(--line)}
+.editbar[hidden]{display:none}
+.editbar .sep{width:1px;height:22px;background:var(--line)}
+button.danger{color:var(--same);border-color:var(--same)}
+.row .pick{display:none;margin-right:8px}
+body.editing .row{grid-template-columns:auto 1fr auto}
+body.editing .row .pick{display:inline-block;grid-row:1/3;align-self:center}
+body.editing .row .m{grid-column:2/-1}
+.edited{outline:1px dashed var(--hold);outline-offset:-1px}
 .warn{color:var(--hold)}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 @media (max-width:860px){main{grid-template-columns:1fr}#list{max-height:40vh;border-right:0;border-bottom:1px solid var(--line)}#detail{max-height:none;padding:16px}.two{grid-template-columns:1fr}.checks .c{grid-template-columns:22px 1fr}.checks .c .t{grid-column:2}header,.filters{padding-left:16px;padding-right:16px}}
@@ -88,8 +101,11 @@ textarea{width:100%;min-height:54px;margin-top:8px}
 </head>
 <body>
 <header>
-  <div class="top"><h1>Screening review</h1><span class="sub" id="meta"></span>
-    <span style="flex:1"></span><button class="s" id="theme" title="Toggle theme">◐</button></div>
+  <div class="top"><h1>Screening review <span class="tag">Management</span></h1><span class="sub" id="meta"></span>
+    <span style="flex:1"></span>
+    <button class="s" id="editBtn" aria-pressed="false" title="Remove hits or change decisions in bulk">✎ Edit hit list</button>
+    <a class="switch" href="staff.html" title="Switch to the staff check page">Staff check →</a>
+    <button class="s" id="theme" title="Toggle theme">◐</button></div>
   <div class="kpis" id="kpis"></div>
   <div class="bar" id="bar" aria-hidden="true"></div>
 </header>
@@ -104,6 +120,21 @@ textarea{width:100%;min-height:54px;margin-top:8px}
   <label class="tog"><input type="checkbox" id="heldOnly"> held by safety net</label>
   <label class="tog"><input type="checkbox" id="ovOnly"> my overrides</label>
 </div>
+<div class="editbar" id="editbar" hidden>
+  <b>Editing the hit list</b><span class="sub" id="selCount">0 selected</span>
+  <button class="s" data-e="all">Select all shown</button>
+  <button class="s" data-e="none">Clear selection</button>
+  <span class="sep"></span>
+  <button class="s" data-e="DIFFERENT_ENTITY">Mark Cleared</button>
+  <button class="s" data-e="SAME_ENTITY">Mark Same entity</button>
+  <button class="s" data-e="REVIEW">Mark Review</button>
+  <button class="s" data-e="system">Back to system decision</button>
+  <button class="s danger" data-e="remove">Remove from list</button>
+  <span class="sep"></span>
+  <button class="s" data-e="restore" id="restoreBtn">Restore removed (0)</button>
+  <button class="s" data-e="export">Export edited list</button>
+  <button class="p" data-e="done">Done</button>
+</div>
 <main>
   <div id="list" role="listbox" aria-label="Hits"></div>
   <div id="detail"><div class="empty">Select a hit</div></div>
@@ -116,6 +147,11 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const isHeld = h => /uncertain evidence/.test(h.reason);
 let ov = {}; try { ov = JSON.parse(localStorage.getItem("screening-overrides") || "{}"); } catch (e) {}
 const saveOv = () => { try { localStorage.setItem("screening-overrides", JSON.stringify(ov)); } catch (e) {} };
+let removed = {}; try { removed = JSON.parse(localStorage.getItem("screening-removed") || "{}"); } catch (e) {}
+const saveRemoved = () => { try { localStorage.setItem("screening-removed", JSON.stringify(removed)); } catch (e) {} };
+const picked = new Set();
+const eff = h => (ov[h.hit_id] && ov[h.hit_id].decision) || h.decision;   // decision after any edit
+const live = () => H.filter(h => !removed[h.hit_id]);                      // hit list after removals
 let state = {q:"", d:"", code:"", gold:false, held:false, ov:false, sel:null};
 try { const t = localStorage.getItem("screening-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
@@ -124,16 +160,20 @@ const codes = [...new Set(H.map(h => h.code))].sort();
 document.getElementById("code").insertAdjacentHTML("beforeend", codes.map(c => `<option>${c}</option>`).join(""));
 
 function kpis(){
-  const n = H.length, c = k => H.filter(h => h.decision === k).length;
-  const g = H.filter(h => h.gold), right = g.filter(h => h.gold.decision === h.decision).length;
-  const unsafe = g.filter(h => h.decision === "DIFFERENT_ENTITY" && h.gold.decision !== "DIFFERENT_ENTITY").length;
+  const L = live(), n = L.length || 1, c = k => L.filter(h => eff(h) === k).length;
+  const g = L.filter(h => h.gold), right = g.filter(h => h.gold.decision === eff(h)).length;
+  const unsafe = g.filter(h => eff(h) === "DIFFERENT_ENTITY" && h.gold.decision !== "DIFFERENT_ENTITY").length;
+  const edits = Object.keys(ov).filter(id => !removed[id] && ov[id].decision !== (H.find(h => h.hit_id === id) || {}).decision).length;
+  const nRemoved = Object.keys(removed).length;
+  document.getElementById("meta").textContent = `${L.length} hits${nRemoved ? ` (${nRemoved} removed)` : ""}${edits ? ` · ${edits} decisions edited` : ""} · ${DATA.folder} · built ${DATA.built}`;
+  document.getElementById("restoreBtn").textContent = `Restore removed (${nRemoved})`;
   const tiles = [
-    ["", n, "hits decided"],
+    ["", L.length, "hits decided"],
     ["DIFFERENT_ENTITY", c("DIFFERENT_ENTITY"), `cleared automatically (${Math.round(100*c("DIFFERENT_ENTITY")/n)}%)`],
     ["SAME_ENTITY", c("SAME_ENTITY"), "same entity → compliance"],
     ["REVIEW", c("REVIEW"), "sent to an analyst"],
     ["gold", g.length ? `${right}/${g.length}` : "–", `practice labels right · ${unsafe} unsafe clears`],
-    ["held", H.filter(isHeld).length, "held by the safety net"],
+    ["held", L.filter(isHeld).length, "held by the safety net"],
   ];
   document.getElementById("kpis").innerHTML = tiles.map(([k, v, t]) =>
     `<div class="kpi" data-k="${k}" tabindex="0"><b>${v}</b><span>${t}</span></div>`).join("");
@@ -158,7 +198,7 @@ function sync(){
 
 function filtered(){
   const q = state.q.toLowerCase();
-  return H.filter(h => (!state.d || h.decision === state.d) && (!state.code || h.code === state.code)
+  return live().filter(h => (!state.d || eff(h) === state.d) && (!state.code || h.code === state.code)
     && (!state.gold || h.gold) && (!state.held || isHeld(h)) && (!state.ov || ov[h.hit_id])
     && (!q || [h.hit_id, h.alert_id, h.record, h.screened.name, h.hit.name, ...(h.hit.names || [])].join(" ").toLowerCase().includes(q)));
 }
@@ -166,15 +206,19 @@ function filtered(){
 function render(){
   const rows = filtered();
   const list = document.getElementById("list");
-  list.innerHTML = `<div class="count">${rows.length} of ${H.length} hits</div>` + rows.map(h => {
-    const o = ov[h.hit_id];
-    return `<div class="row ${h.hit_id === state.sel ? "sel" : ""}" role="option" tabindex="0" data-id="${h.hit_id}">
+  list.innerHTML = `<div class="count">${rows.length} of ${live().length} hits</div>` + rows.map(h => {
+    const o = ov[h.hit_id], d = eff(h), changed = d !== h.decision;
+    return `<div class="row ${h.hit_id === state.sel ? "sel" : ""} ${changed ? "edited" : ""}" role="option" tabindex="0" data-id="${h.hit_id}">
+      <input type="checkbox" class="pick" aria-label="Select ${esc(h.hit_id)}" data-pick="${h.hit_id}" ${picked.has(h.hit_id) ? "checked" : ""}>
       <span class="n">${esc(h.screened.name)}</span>
-      <span class="badge ${isHeld(h) ? "held" : h.decision}">${isHeld(h) ? "Held" : LABEL[h.decision]}${o ? " ✎" : ""}</span>
+      <span class="badge ${isHeld(h) && !changed ? "held" : d}">${isHeld(h) && !changed ? "Held" : LABEL[d]}${o ? " ✎" : ""}</span>
       <span class="m">${esc(h.hit.name)} · ${esc(h.hit.category || "")} · ${h.code}${h.gold ? " · ★" : ""}</span></div>`;
   }).join("");
-  list.querySelectorAll(".row").forEach(el => { el.onclick = () => select(el.dataset.id);
+  list.querySelectorAll(".row").forEach(el => { el.onclick = e => { if (!e.target.matches(".pick")) select(el.dataset.id); };
     el.onkeydown = e => { if (e.key === "Enter") select(el.dataset.id); }; });
+  list.querySelectorAll(".pick").forEach(cb => cb.onchange = () => {
+    cb.checked ? picked.add(cb.dataset.pick) : picked.delete(cb.dataset.pick); updateSel(); });
+  updateSel();
   if (!rows.find(h => h.hit_id === state.sel)) { if (rows[0]) select(rows[0].hit_id, false); else detail(null); }
 }
 
@@ -266,8 +310,41 @@ function act(h, a){
     const link = Object.assign(document.createElement("a"), {href:URL.createObjectURL(blob), download:"analyst_decisions.jsonl"});
     link.click(); return;
   }
-  saveOv(); render(); select(h.hit_id, false);
+  saveOv(); kpis(); render(); select(h.hit_id, false);
 }
+
+// ---- editing the hit list (management can change it at any time; kept in this browser, exportable)
+function updateSel(){ document.getElementById("selCount").textContent = `${picked.size} selected`; }
+function setEditing(on){
+  document.body.classList.toggle("editing", on);
+  document.getElementById("editbar").hidden = !on;
+  document.getElementById("editBtn").setAttribute("aria-pressed", on);
+  if (!on) picked.clear();
+  render();
+}
+document.getElementById("editBtn").onclick = () => setEditing(!document.body.classList.contains("editing"));
+document.querySelectorAll("[data-e]").forEach(b => b.onclick = () => {
+  const e = b.dataset.e, now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  if (e === "all") filtered().forEach(h => picked.add(h.hit_id));
+  else if (e === "none") picked.clear();
+  else if (["DIFFERENT_ENTITY", "SAME_ENTITY", "REVIEW"].includes(e)) {
+    if (!picked.size) return;
+    picked.forEach(id => { ov[id] = {decision:e, note:"bulk edit from the management page", at:now}; });
+    saveOv();
+  } else if (e === "system") { picked.forEach(id => delete ov[id]); saveOv(); }
+  else if (e === "remove") {
+    if (!picked.size || !confirm(`Remove ${picked.size} hit(s) from the list? You can restore them later.`)) return;
+    picked.forEach(id => { removed[id] = now; }); picked.clear(); saveRemoved();
+  } else if (e === "restore") { removed = {}; saveRemoved(); }
+  else if (e === "export") {
+    const lines = live().map(h => JSON.stringify({hit_id:h.hit_id, alert_id:h.alert_id, system_decision:h.decision,
+      decision:eff(h), reason_code:h.code, edited:eff(h) !== h.decision, note:(ov[h.hit_id] || {}).note || null}));
+    const blob = new Blob([lines.join("\n") + "\n"], {type:"application/jsonl"});
+    Object.assign(document.createElement("a"), {href:URL.createObjectURL(blob), download:"edited_hit_list.jsonl"}).click();
+    return;
+  } else if (e === "done") { setEditing(false); kpis(); return; }
+  kpis(); render();
+});
 
 document.getElementById("q").oninput = e => { state.q = e.target.value; render(); };
 document.querySelectorAll(".chip").forEach(b => b.onclick = () => { state.d = b.dataset.d; sync(); render(); });

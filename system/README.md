@@ -195,6 +195,26 @@ no date of birth, so nothing contradicts it and nothing confirms it.
  "evidence": ["NOTE-10AEAB"]}
 ```
 
+## Demo: staff check and management review
+
+```
+python -m screening_ml.demo_server          # standard library; open http://127.0.0.1:8765/staff.html
+```
+
+Two pages with a switch button on each:
+
+- **Staff check** (`/staff.html`): a member of staff types a customer's name (and, if known, DOB, country, city,
+  or an account, login or email) and presses *Run check*. The page screens the name against every watchlist
+  profile, finds the customer in the bank's systems and runs the same engine as `system/run`. Each matching
+  profile is shown as a card whose evidence appears one item at a time ("Name matched", "DOB matched",
+  "Country doesn't match", "Too young at the time", "Held for safety", …), then an ALERT / REVIEW / CLEAR stamp,
+  then an overall verdict. *Why?* shows the full reason and the cited records. Demo customers are one click away.
+- **Management review** (`/management.html`): the statistics page below, plus **Edit hit list**: select hits,
+  mark them Cleared / Same entity / Review, return them to the system's decision, remove them from the list or
+  restore them, and export the edited list. The headline numbers update as the list changes.
+
+The server binds to 127.0.0.1 only; the pages show customer data, so never expose it.
+
 ## Analyst screen
 
 `python -m screening_ml.analyst_view --data <data folder>` (standard library, about 3 seconds) writes
