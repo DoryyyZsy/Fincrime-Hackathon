@@ -7,8 +7,13 @@ ml-check:
 ml-train:
 	$(PYTHON) -m screening_ml.train
 ml-predict:
-	$(PYTHON) -m screening_ml.predict --data $(ML_DATA) --out output/dev.jsonl
+	$(PYTHON) -m screening_ml.predict --data $(ML_DATA) --out artifacts/dev_nn.jsonl
 ml-validate:
+	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output artifacts/dev_nn.jsonl --score $(ML_DATA)/practice_labels.jsonl
+# submission: rule engine, standard library only
+submit-run:
+	$(PYTHON) system/run $(ML_DATA) output/dev.jsonl
+submit-validate:
 	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output output/dev.jsonl --score $(ML_DATA)/practice_labels.jsonl
 ml-finetune:
 	$(PYTHON) -m screening_ml.finetune

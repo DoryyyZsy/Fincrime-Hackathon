@@ -1,6 +1,8 @@
 """Predict every hit in a data folder and write the submission file (one JSON line per hit).
 
-    python -m screening_ml.predict --data data/screening/dev --out output/dev.jsonl [--checkpoint artifacts/model.pt]
+    python -m screening_ml.predict --data data/screening/dev --out artifacts/dev_nn.jsonl [--checkpoint artifacts/model.pt]
+
+The submission file output/dev.jsonl is written by system/run (rule engine, standard library only), not here.
 """
 import argparse
 import json
@@ -19,7 +21,7 @@ from .model import decide, pick_device
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", default="data/screening/dev")
-    ap.add_argument("--out", default="output/dev.jsonl")
+    ap.add_argument("--out", default="artifacts/dev_nn.jsonl")
     ap.add_argument("--checkpoint", default="artifacts/model.pt")
     ap.add_argument("--config", help="override inference settings from this config")
     ap.add_argument("--device")

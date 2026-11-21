@@ -58,8 +58,8 @@ Put the data room's `dev/` folder at `data/screening/dev/` (git-ignored; never c
 ```powershell
 python -m screening_ml.check_data            # audit the data and the labels
 python -m screening_ml.train                 # train on silver, validate on gold -> artifacts/model.pt
-python -m screening_ml.predict --data data/screening/dev --out output/dev.jsonl
-python data/screening/validate.py --data data/screening/dev --output output/dev.jsonl --score data/screening/dev/practice_labels.jsonl
+python -m screening_ml.predict --data data/screening/dev --out artifacts/dev_nn.jsonl
+python data/screening/validate.py --data data/screening/dev --output artifacts/dev_nn.jsonl --score data/screening/dev/practice_labels.jsonl
 python -m screening_ml.finetune --labels my_labels.jsonl   # optional
 ```
 
@@ -99,7 +99,7 @@ Seed 42, default config, CPU, leak-free grouped split (below). Network alone, be
 \* the organisers' score: share of cost saved versus sending everything to REVIEW. One unsafe clear costs 60,
 which is why one mistake in 72 drops validation to 47.9.
 
-**Final output** (`output/dev.jsonl`, network + guards): `validate.py` reports 0 problems, 50/50 practice hits,
+**Final output** (`artifacts/dev_nn.jsonl`, network + guards; the submission file `output/dev.jsonl` comes from `system/run`): `validate.py` reports 0 problems, 50/50 practice hits,
 reason code 100%, customer record 100%. Against the rule engine on all 819 hits:
 
 | Error type | Meaning here | Count |
