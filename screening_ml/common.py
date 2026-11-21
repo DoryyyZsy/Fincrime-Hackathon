@@ -17,6 +17,16 @@ def load_config(path=None):
         return yaml.safe_load(handle)
 
 
+def apply_drops(X, feature_names, cfg):
+    """Zero the features listed in cfg['drop_features'] (same at train, predict and fine-tune time)."""
+    cols = [feature_names.index(f) for f in cfg.get("drop_features") or [] if f in feature_names]
+    if not cols:
+        return X, []
+    X = X.copy()
+    X[:, cols] = 0.0
+    return X, [feature_names[c] for c in cols]
+
+
 def silver_targets(cases):
     y_dec = np.array([DECISIONS.index(c.teacher_decision) for c in cases])
     y_code = np.array([REASON_CODES.index(c.teacher_code) for c in cases])

@@ -78,30 +78,61 @@ longer an independent check; fine-tune on your own extra labels when you have th
 | How hard unsafe clearances are punished in training | `train.cost_weight` (official cost matrix) |
 | How confident the model must be to clear | `inference.clear_min_prob` |
 | Allow the model to clear without an SOP contradiction | `inference.rule_guard: false` (risky: a wrong clear costs 60) |
+| Allow SAME_ENTITY despite a contradiction | `inference.same_guard: false` |
+| Leak-free vs per-hit split | `labels.group_split` |
+| Feature ablation | `drop_features` |
 | New features | append to `FEATURE_NAMES` and `featurize()` in `features.py`, then retrain |
 | Better free-text extraction (ages, KYC notes) | `hit.extract_ages`, `customer._kyc_note_identity` (an LLM call can go here) |
 | Fine-tuning on new labels | `config.yaml` → `finetune`, then `python -m screening_ml.finetune` |
 
 ## Results on the dev set
 
-Seed 42, default config, CPU (about 11 s including feature building):
+Seed 42, default config, CPU, leak-free grouped split (below). Network alone, before the guards:
 
-| Set | n | Accuracy | Decision score* | Unsafe clears |
+| Set | n | Accuracy | Decision score* | Unsafe clears (FN) |
 |---|---|---|---|---|
-| Silver train | 654 | 98.6% | 98.0 | 0 |
-| Silver validation | 115 | 93.9% | 90.9 | 0 |
+| Silver train | 407 | 97.8% | 96.6 | 0 |
+| Silver validation (no shared alert/customer/watchlist name) | 72 | 97.2% | 47.9 | **1** |
 | Gold practice labels (held out) | 50 | 100% | 100.0 | 0 |
 | Rule teacher on gold | 50 | 100% | 100.0 | 0 |
 
-\* the organisers' score: share of cost saved versus sending everything to REVIEW.
+\* the organisers' score: share of cost saved versus sending everything to REVIEW. One unsafe clear costs 60,
+which is why one mistake in 72 drops validation to 47.9.
 
-`validate.py` on `output/dev.jsonl`: 819 lines, 0 problems; practice labels 50/50 right, reason code 96%,
-customer record 100%. The network agrees with the rule teacher on 803 of 819 hits; all 16 disagreements are
-clears the network was not confident about, which it sends to REVIEW (the safe direction). Two training runs
-give byte-identical output.
+**Final output** (`output/dev.jsonl`, network + guards): `validate.py` reports 0 problems, 50/50 practice hits,
+reason code 100%, customer record 100%. Against the rule engine on all 819 hits:
 
-Note: the official cost matrix makes "lowest expected cost" a poor decision rule (a wrong clear costs 60 but a
-wrong SAME only 3, so it labels namesakes SAME). `inference.use_cost_matrix` is therefore off by default.
+| Error type | Meaning here | Count |
+|---|---|---|
+| False negative (unsafe clear) | cleared a hit the rules keep open | 0 (the guard blocked the network's 1) |
+| False positive | kept open a namesake the rules clear | 32 (all sent to REVIEW, none to SAME) |
+| Missed SAME_ENTITY | rules confirm, output does not | 0 |
+
+Two training runs give byte-identical output.
+
+### Leakage checks (and what was fixed)
+
+| Check | Finding | Status |
+|---|---|---|
+| Gold hits in training | none (indices disjoint) | ok |
+| Same alert / customer / watchlist name across train, val and gold | first version: 44 alerts shared train/val, 20 train/gold; 31/115 val rows were exact feature copies of train rows, so val was inflated (93.9%) | fixed: `labels.group_split` keeps groups together and drops 290 hits linked to gold from train/val |
+| Normalisation stats | computed on train rows only | ok |
+| Practice labels used as features | no; only for scoring | ok |
+| Features that encode the label | `dob_contra`, `country_disjoint`, `under_min_age`, `type_mismatch`, `deceased_before_screening` are the SOP checks themselves, so the net is distilling the rules | by design; ablation below |
+| Tuning on gold | I fixed two rule bugs (accented search keys, accented age pattern) **after** seeing gold misses (48 to 50/50), so the teacher's gold score is optimistic | cannot be undone; the unseen set is the only clean test |
+| Fine-tuning on practice labels | uses up the gold labels | documented in the Run section |
+| Independent re-audit with wider keys (every candidate record, every alias, source URLs, identifiers) | no alert, customer or candidate record shared between train, val and gold. Shared keys are only generic list URLs (UN/UK sanctions lists, 419 cross-set pairs) and junk alias keys; the 4 URL pairs whose names "agree" are N26 Bank vs Danske Bank, which agree only on the word "Bank" | ok, no leak |
+| Near-duplicates (standardised features) | median nearest-neighbour distance val→train 4.08 and gold→train 4.05, versus 2.31 train→train; the 2 exact copies are different people with the same fact pattern | ok |
+| Gold labels in the code path | used only to exclude hits and to print scores; never in the loss, early stopping or prediction | ok |
+| Choices made after looking at results | early stopping uses silver val (standard, slightly optimistic); `use_cost_matrix` off, `same_guard` on and `final_fit` off were chosen after seeing dev and gold results | gold is a development check, not a clean test |
+
+Ablation (`drop_features` = the 5 SOP flags + `dob_agree` + `name_agree`): gold falls to 84% (score 77.8) and
+validation has 2 unsafe clears. The network does learn from the underlying facts, but far less reliably
+than the rules, so keep `rule_guard` on.
+
+Notes: the official cost matrix makes "lowest expected cost" a poor decision rule (a wrong clear costs 60 but a
+wrong SAME only 3, so it labels namesakes SAME), so `inference.use_cost_matrix` is off. `train.final_fit` (refit on
+all non-gold hits) was tried and under-fits (48 namesakes kept open), so it is off too.
 
 ## Limits, honestly
 

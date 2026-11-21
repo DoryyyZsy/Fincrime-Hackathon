@@ -10,7 +10,7 @@ import sys
 import numpy as np
 import torch
 
-from .common import load_checkpoint, load_config
+from .common import apply_drops, load_checkpoint, load_config
 from .compare import CLEAR_ORDER, DECISIONS, REASON_CODES, evidence_for
 from .features import build_cases
 from .model import decide, pick_device
@@ -33,13 +33,14 @@ def main(argv=None):
     if data["feature_names"] != ckpt["feature_names"]:
         raise SystemExit("feature list changed since this checkpoint was trained; retrain first")
     cases = data["cases"]
-    X = torch.tensor((data["X"] - ckpt["mean"]) / ckpt["std"], dtype=torch.float32, device=device)
+    Xnp, _ = apply_drops(data["X"], data["feature_names"], ckpt["config"])
+    X = torch.tensor((Xnp - ckpt["mean"]) / ckpt["std"], dtype=torch.float32, device=device)
     with torch.no_grad():
         dl, cl = model(X)
         dec, code, probs = decide(dl, cl, icfg)
     dec, code, probs = dec.cpu().numpy(), code.cpu().numpy(), probs.cpu().numpy()
 
-    guarded = 0
+    guarded = guarded_same = 0
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as handle:
         for i, case in enumerate(cases):
@@ -50,6 +51,11 @@ def main(argv=None):
                     decision, reason_code, guarded = "REVIEW", case.teacher_code if case.teacher_decision == "REVIEW" else "INSUFFICIENT_DATA", guarded + 1
                 elif reason_code not in fired:
                     reason_code = fired[0]
+            if decision == "SAME_ENTITY" and icfg.get("same_guard", True):
+                fired = [c for c in CLEAR_ORDER if case.comparisons and case.comparisons[0].checks[c].fired]
+                if fired or case.teacher_code == "AMBIGUOUS_CUSTOMER_RECORD":  # a contradiction exists: not SAME
+                    decision, guarded_same = "REVIEW", guarded_same + 1
+                    reason_code = "AMBIGUOUS_CUSTOMER_RECORD" if case.teacher_code == "AMBIGUOUS_CUSTOMER_RECORD" else "INSUFFICIENT_DATA"
             evidence, reason = evidence_for(case, reason_code)
             check = case.comparisons[0].checks.get(reason_code) if case.comparisons else None
             if decision != case.teacher_decision and not (check and check.fired):
@@ -67,7 +73,8 @@ def main(argv=None):
             counts[json.loads(line)["decision"]] += 1
     agree = sum(1 for i, c in enumerate(cases) if DECISIONS[dec[i]] == c.teacher_decision)
     print(f"wrote {len(cases)} lines to {args.out}: {counts}")
-    print(f"network agrees with the rule teacher on {agree}/{len(cases)} hits; rule_guard blocked {guarded} clearances")
+    print(f"network agrees with the rule teacher on {agree}/{len(cases)} hits; rule_guard blocked {guarded} clearances, "
+          f"same_guard blocked {guarded_same} SAME_ENTITY calls")
     return 0
 
 

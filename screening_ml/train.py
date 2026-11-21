@@ -9,23 +9,79 @@ import time
 import numpy as np
 import torch
 
-from .common import gold_targets, load_config, report, save_checkpoint, silver_targets
+from .common import apply_drops, gold_targets, load_config, report, save_checkpoint, silver_targets
 from .features import build_cases
 from .model import HitNet, decide, loss_fn, pick_device, set_seed
 
 
-def split_indices(n, exclude, val_fraction, y, seed):
-    """Stratified train/val split over silver labels, leaving out the gold hits."""
+def leakage_groups(cases):
+    """Group hits that would leak into each other: same alert, same customer person, or same watchlist name.
+
+    Hits of one alert share the customer's features; one watchlist profile is often screened against several
+    customers. Splitting such hits across train and validation/gold inflates the scores.
+    """
+    parent = list(range(len(cases)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    first = {}
+    for i, c in enumerate(cases):
+        keys = [("alert", c.alert_id)]
+        if c.customer_record_id not in (None, "AMBIGUOUS"):
+            person = c.comparisons[0].person
+            keys.append(("person", person.records[0] if person.records else c.customer_record_id))
+        hit = c.comparisons[0].hit if c.comparisons else None
+        if hit and hit.names:
+            keys.append(("hit", " ".join(sorted(hit.names[0][1]))))
+        for k in keys:
+            if k in first:
+                a, b = find(i), find(first[k])
+                parent[max(a, b)] = min(a, b)
+            else:
+                first[k] = i
+    return np.array([find(i) for i in range(len(cases))])
+
+
+def split_indices(n, exclude, val_fraction, y, seed, groups=None):
+    """Train/val split over silver labels that leaves out the gold hits.
+
+    With `groups`, whole groups go to one side (no leakage) and every group touching a gold hit is removed
+    from train and val too. Without it, a per-hit stratified split (leaky; kept for comparison).
+    """
     rng = np.random.default_rng(seed)
-    pool = np.array([i for i in range(n) if i not in set(exclude)])
-    train, val = [], []
-    for cls in np.unique(y[pool]):
-        members = pool[y[pool] == cls]
-        rng.shuffle(members)
-        k = int(round(len(members) * val_fraction))
-        val += list(members[:k])
-        train += list(members[k:])
-    return np.array(sorted(train)), np.array(sorted(val))
+    exclude = set(int(i) for i in exclude)
+    if groups is None:
+        pool = np.array([i for i in range(n) if i not in exclude])
+        train, val = [], []
+        for cls in np.unique(y[pool]):
+            members = pool[y[pool] == cls]
+            rng.shuffle(members)
+            k = int(round(len(members) * val_fraction))
+            val += list(members[:k])
+            train += list(members[k:])
+        return np.array(sorted(train)), np.array(sorted(val))
+    banned = {groups[i] for i in exclude}
+    pool_groups = sorted({g for i, g in enumerate(groups) if g not in banned})
+    rng.shuffle(pool_groups)
+    target, val_groups, size = val_fraction * sum(groups[i] not in banned for i in range(n)), set(), 0
+    for g in pool_groups:  # fill validation with whole groups until it reaches the target size
+        if size >= target:
+            break
+        val_groups.add(g)
+        size += int((groups == g).sum())
+    train = [i for i in range(n) if groups[i] not in banned and groups[i] not in val_groups]
+    val = [i for i in range(n) if groups[i] in val_groups]
+    return np.array(train), np.array(val)
+
+
+def duplicate_rows(X, a, b):
+    """How many rows in index set a have an identical feature vector somewhere in index set b."""
+    seen = {X[i].tobytes() for i in b}
+    return sum(X[i].tobytes() in seen for i in a)
 
 
 def run_epochs(model, X, y_dec, y_code, train_idx, val_idx, tcfg, device, class_weights=None, seed=0):
@@ -33,7 +89,7 @@ def run_epochs(model, X, y_dec, y_code, train_idx, val_idx, tcfg, device, class_
                             lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=tcfg["epochs"])
     gen = torch.Generator().manual_seed(seed)
-    best, best_state, bad = float("inf"), None, 0
+    best, best_state, bad, best_epoch = float("inf"), None, 0, 0
     for epoch in range(tcfg["epochs"]):
         model.train()
         order = train_idx[torch.randperm(len(train_idx), generator=gen).numpy()]
@@ -45,12 +101,14 @@ def run_epochs(model, X, y_dec, y_code, train_idx, val_idx, tcfg, device, class_
             loss.backward()
             opt.step()
         sched.step()
+        if val_idx is None:  # fixed-length run (final fit): no validation, keep the last weights
+            continue
         model.eval()
         with torch.no_grad():
             dl, cl = model(X[val_idx])
             val_loss = loss_fn(dl, cl, y_dec[val_idx], y_code[val_idx], tcfg, class_weights).item()
         if val_loss < best - 1e-5:
-            best, bad = val_loss, 0
+            best, bad, best_epoch = val_loss, 0, epoch + 1
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad += 1
@@ -61,7 +119,7 @@ def run_epochs(model, X, y_dec, y_code, train_idx, val_idx, tcfg, device, class_
             break
     if best_state:
         model.load_state_dict(best_state)
-    return best
+    return best, best_epoch
 
 
 def main(argv=None):
@@ -85,8 +143,17 @@ def main(argv=None):
     print(f"features: {Xnp.shape[0]} hits x {Xnp.shape[1]} features; gold labels: {len(g_idx)}")
 
     exclude = g_idx if cfg["labels"].get("exclude_gold_from_train", True) else []
-    train_idx, val_idx = split_indices(len(cases), exclude, cfg["labels"]["val_fraction"], y_dec_np, cfg["seed"])
-    print(f"split: train {len(train_idx)} silver, val {len(val_idx)} silver, gold held out {len(exclude)}")
+    groups = leakage_groups(cases) if cfg["labels"].get("group_split", True) else None
+    train_idx, val_idx = split_indices(len(cases), exclude, cfg["labels"]["val_fraction"], y_dec_np, cfg["seed"], groups)
+    removed = len(cases) - len(train_idx) - len(val_idx) - len(exclude)
+    print(f"split: train {len(train_idx)} silver, val {len(val_idx)} silver, gold held out {len(exclude)}"
+          + (f", {removed} more removed for sharing an alert/customer/watchlist name with gold" if groups is not None else " (per-hit split: leaky)"))
+    print(f"leakage check: exact feature duplicates val-in-train {duplicate_rows(Xnp, val_idx, train_idx)}/{len(val_idx)}, "
+          f"gold-in-train {duplicate_rows(Xnp, g_idx, train_idx)}/{len(g_idx)}")
+
+    Xnp, dropped = apply_drops(Xnp, data["feature_names"], cfg)  # ablation, see config.yaml
+    if dropped:
+        print(f"dropped features: {dropped}")
 
     mean = Xnp[train_idx].mean(0)
     std = Xnp[train_idx].std(0) + 1e-6
@@ -101,7 +168,7 @@ def main(argv=None):
 
     model = HitNet(X.shape[1], tuple(cfg["model"]["hidden"]), cfg["model"]["dropout"]).to(device)
     print(f"model: {sum(p.numel() for p in model.parameters())} parameters")
-    run_epochs(model, X, y_dec, y_code, train_idx, val_idx, cfg["train"], device, weights, cfg["seed"])
+    _, best_epoch = run_epochs(model, X, y_dec, y_code, train_idx, val_idx, cfg["train"], device, weights, cfg["seed"])
 
     model.eval()
     with torch.no_grad():
@@ -117,6 +184,30 @@ def main(argv=None):
         metrics["gold"] = report("gold (practice labels)", g_dec, dec[g_idx], g_code, code[g_idx], g_rows)
         metrics["teacher_on_gold"] = report("rule teacher on gold  ", g_dec, y_dec_np[g_idx], g_code, y_code_np[g_idx], g_rows)
     out = args.out or f"{cfg['artifacts_dir']}/model.pt"
+
+    if cfg["train"].get("final_fit", True) and best_epoch:
+        # The numbers above are the honest, leak-free estimate. For the model we ship, refit from scratch on
+        # every non-gold hit for the epoch count early stopping chose; there is no held-out set left after this.
+        save_checkpoint(out.replace(".pt", "_eval.pt"), model, mean, std, cfg, data["feature_names"], metrics)
+        set_seed(cfg["seed"], cfg.get("deterministic", True))
+        fit_idx = np.array([i for i in range(len(cases)) if i not in set(int(g) for g in exclude)])
+        mean = Xnp[fit_idx].mean(0)
+        std = Xnp[fit_idx].std(0) + 1e-6
+        X = torch.tensor((Xnp - mean) / std, dtype=torch.float32, device=device)
+        if weights is not None:
+            counts = np.bincount(y_dec_np[fit_idx], minlength=3).astype(np.float32)
+            weights = torch.tensor(counts.sum() / (3 * np.maximum(counts, 1)), device=device)
+        model = HitNet(X.shape[1], tuple(cfg["model"]["hidden"]), cfg["model"]["dropout"]).to(device)
+        run_epochs(model, X, y_dec, y_code, fit_idx, None, dict(cfg["train"], epochs=best_epoch), device, weights, cfg["seed"])
+        model.eval()
+        with torch.no_grad():
+            dl, cl = model(X)
+            dec, code, _ = decide(dl, cl, cfg["inference"])
+        dec, code = dec.cpu().numpy(), code.cpu().numpy()
+        print(f"\n== final fit on {len(fit_idx)} non-gold hits for {best_epoch} epochs "
+              f"(gold below shares alerts with training: NOT an independent check)")
+        metrics["final_fit"] = {"epochs": best_epoch, "n": int(len(fit_idx)),
+                                "gold_not_independent": report("gold (final model)", g_dec, dec[g_idx], g_code, code[g_idx], g_rows) if len(g_idx) else None}
     save_checkpoint(out, model, mean, std, cfg, data["feature_names"], metrics)
     print(f"\nsaved {out} ({time.time() - t0:.1f}s)")
     return 0

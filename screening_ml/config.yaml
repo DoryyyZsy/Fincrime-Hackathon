@@ -9,6 +9,14 @@ labels:
   source: silver           # silver = SOP rule engine labels; gold labels stay held out for validation
   exclude_gold_from_train: true
   val_fraction: 0.15       # silver hold-out for early stopping
+  # Keep hits that share an alert, a customer or a watchlist name on one side of the split, and drop from
+  # train/val anything sharing them with a gold hit. false = per-hit split (leaky: inflates val and gold).
+  group_split: true
+
+# Ablation: zero these features. The SOP-check flags below decide the silver label almost by themselves;
+# drop them to see what the network learns from the underlying facts alone, e.g.
+# [type_mismatch, deceased_before_screening, under_min_age, dob_contra, country_disjoint]
+drop_features: []
 
 model:
   hidden: [128, 64]
@@ -24,6 +32,9 @@ train:
   reason_weight: 0.5       # weight of the reason-code head loss
   cost_weight: 0.05        # weight of the expected-cost term (official cost matrix)
   balance_classes: true    # inverse-frequency class weights
+  final_fit: false         # true = after the leak-free evaluation, refit on all non-gold hits for the chosen
+                           # epoch count (saved as model.pt, evaluated model as model_eval.pt). Tried on dev:
+                           # it under-fits (48 namesakes kept open vs 32, gold 48/50), so it is off for now.
 
 inference:
   # false = most likely class, then the clear_min_prob safety check (recommended).
@@ -32,6 +43,7 @@ inference:
   use_cost_matrix: false
   clear_min_prob: 0.9      # never clear a hit unless P(DIFFERENT_ENTITY) >= this
   rule_guard: true         # never clear a hit unless an SOP contradiction actually fired
+  same_guard: true         # never say SAME_ENTITY when an SOP contradiction fired (REVIEW instead)
 
 finetune:
   labels: data/screening/dev/practice_labels.jsonl   # any file in practice_labels.jsonl format

@@ -11,7 +11,7 @@ import sys
 import numpy as np
 import torch
 
-from .common import gold_targets, load_checkpoint, load_config, report, save_checkpoint
+from .common import apply_drops, gold_targets, load_checkpoint, load_config, report, save_checkpoint
 from .data import read_jsonl
 from .features import build_cases
 from .model import decide, pick_device, set_seed
@@ -44,7 +44,8 @@ def main(argv=None):
     hold, fit = perm[:k], perm[k:]
     print(f"device: {device}; labels: {len(idx)} (fine-tune on {len(fit)}, hold out {len(hold)})")
 
-    X = torch.tensor((data["X"] - ckpt["mean"]) / ckpt["std"], dtype=torch.float32, device=device)
+    Xnp, _ = apply_drops(data["X"], data["feature_names"], ckpt["config"])
+    X = torch.tensor((Xnp - ckpt["mean"]) / ckpt["std"], dtype=torch.float32, device=device)
     y_dec = torch.zeros(len(X), dtype=torch.long, device=device)
     y_code = torch.zeros(len(X), dtype=torch.long, device=device)
     y_dec[idx] = torch.tensor(y_dec_g, device=device)
