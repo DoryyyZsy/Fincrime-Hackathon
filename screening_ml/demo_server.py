@@ -209,7 +209,7 @@ def make_handler(engine):
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 self.send_response(302)
-                self.send_header("Location", "/staff.html")
+                self.send_header("Location", "/review.html")
                 self.end_headers()
             elif path == "/staff.html":
                 with open(STAFF_PAGE, encoding="utf-8") as handle:
@@ -219,6 +219,8 @@ def make_handler(engine):
             elif path == "/review.html":
                 with open(REVIEW_PAGE, encoding="utf-8") as handle:
                     self._send(200, handle.read(), "text/html; charset=utf-8")
+            elif path == "/api/review/alerts":
+                self._send(200, json.dumps(engine.review.alerts(), ensure_ascii=False), "application/json")
             elif path == "/api/review/queue":
                 self._send(200, json.dumps(engine.review.queue(), ensure_ascii=False), "application/json")
             elif path == "/api/review/hit":
@@ -262,7 +264,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     engine = Engine(args.data, args.audit)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(engine))
-    print(f"open http://127.0.0.1:{args.port}/staff.html  (management: /management.html, decision review: /review.html)")
+    print(f"open http://127.0.0.1:{args.port}/  (screening review)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
