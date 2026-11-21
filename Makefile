@@ -13,6 +13,8 @@ ml-validate:
 # submission: rule engine, standard library only
 submit-run:
 	$(PYTHON) system/run $(ML_DATA) output/dev.jsonl
+demo:
+	$(PYTHON) -m screening_ml.demo_server --data $(ML_DATA) --port 8765
 analyst-view:
 	$(PYTHON) -m screening_ml.analyst_view --data $(ML_DATA) --out artifacts/analyst_view.html
 submit-validate:
