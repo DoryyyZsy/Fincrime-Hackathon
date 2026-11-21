@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 
 from . import normalize as N
 
-RESIDENCE_WORDS = re.compile(r"(?i)resid|lived|living|based|employ|work|moved|relocat|located|home")
+# A support note "about where the customer lived" (principle 6). Deliberately broad: the unseen set rewords these
+# notes ("established their life and career inside...", "had professional and personal ties to..."), and missing
+# one can turn a REVIEW into an unsafe clear. Adding a country can only make a location clear less likely.
+RESIDENCE_WORDS = re.compile(
+    r"(?i)resid|\blived?\b|living|\bbased\b|\bbase\b|employ|\bwork|career|profession|personal life|\blife\b|"
+    r"\bties\b|moved|relocat|located|\bhome\b|\bstay|abroad|emigrat|immigrat|settled|address")
+YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 NEGATIVE_KYC = re.compile(r"(?i)reject|fail|expired|declin|could not|unable|did not match|mismatch|denied|unsuccess")
 
 
@@ -27,6 +33,7 @@ class Person:
     countries: dict = field(default_factory=dict)   # country -> [source ids]
     n_approved_checks: int = 0
     n_rejected_checks: int = 0
+    unread_notes: list = field(default_factory=list)  # notes that look like residence/identity info we could not parse
 
 
 @dataclass
@@ -106,13 +113,34 @@ def _kyc_note_identity(note):
     if NEGATIVE_KYC.search(text):
         return None
     created = N.parse_date(note.get("created_at"))
-    dates = [d for d in N.find_dates(text) if d != created and all(d)]
-    dob = dates[0] if dates else None
-    caps = re.findall(r"\b[A-Z][A-Z'\-]+(?:\s+[A-Z][A-Z'\-]+)+\b", text)
-    caps = [c for c in caps if not re.fullmatch(r"(?:DOB|ID|KYC|USA|UK)(?:\s.*)?", c)]
-    name = max(caps, key=len) if caps else None
+    dates = [d for d in N.find_dates(text) if d != created]
+    full = [d for d in dates if all(d)]
+    dob = full[0] if full else (dates[0] if dates else None)   # "DOB 1974" still gives a birth year
+    name = _caps_name(text)
     countries = N.countries_in_text(text.replace(name, " ") if name else text)  # 'MARCO JORDAN' is not Jordan
     return {"name": name, "dob": dob, "countries": countries, "date": created}
+
+
+_NOT_NAME = {"DOB", "ID", "KYC", "USA", "UK", "US", "EU", "UAE", "AML", "PEP", "SSN", "NIN", "BVN", "OK"}
+
+
+def _caps_name(text):
+    """The longest run of ALL-CAPS words (accents allowed: FERNÁNDEZ), i.e. the name as written on the document."""
+    runs, cur = [], []
+    for m in re.finditer(r"[^\s,;:()]+", text):
+        tok = re.sub(r"(?:['’]s|\.)$", "", m.group(0))
+        if any(c.isalpha() for c in tok) and tok == tok.upper() and tok.upper() not in _NOT_NAME:
+            cur.append(tok)
+        else:
+            if cur:
+                runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    if not runs:
+        return None
+    best = max(runs, key=lambda r: (len(r), len(" ".join(r))))
+    return " ".join(best)
 
 
 def build_person(room, cid):
@@ -157,9 +185,14 @@ def build_person(room, cid):
                     for country in ident["countries"]:
                         person.countries.setdefault(country, []).append(note["note_id"])
                     verified.append((ident["date"], ident["name"], ident["dob"], note["note_id"]))
-            elif RESIDENCE_WORDS.search(note["text"]):
-                for country in N.countries_in_text(note["text"]):
+                    if not ident["dob"] or not ident["name"] or not ident["countries"]:
+                        person.unread_notes.append(note["note_id"])   # identity note only partly understood
+            elif RESIDENCE_WORDS.search(note["text"]) or YEAR.search(note["text"]):
+                found = N.countries_in_text(note["text"])
+                for country in found:
                     person.countries.setdefault(country, []).append(note["note_id"])
+                if not found and RESIDENCE_WORDS.search(note["text"]) and YEAR.search(note["text"]):
+                    person.unread_notes.append(note["note_id"])       # says where they lived, but not readably
 
     if verified:  # principle 4: the most recent approved identity check wins
         verified.sort(key=lambda v: N.date_key(v[0]))

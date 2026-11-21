@@ -27,6 +27,8 @@ _AGE_PATTERNS = [
     re.compile(r"\bat which point (?:he|she|they) (?:was|were) (\d{1,3})\b", re.I),
     re.compile(r"\bwas (\d{1,3}) when\b"),
     re.compile(r"[^\W\d_], (\d{1,3}),"),       # "Elena Johansson, 51, ..." (any letter, incl. accents)
+    re.compile(r"[^\W\d_] \((\d{1,3})\)"),      # "John Smith (41) was sentenced ..."
+    re.compile(r"(?:^|[.;]\s*)At (\d{1,3}),"),  # "At 52, John Smith was appointed ..."
 ]
 _BORN = re.compile(r"\bborn (?:on |in )?([^.;\n]{4,30})", re.I)
 
@@ -65,7 +67,7 @@ def extract_ages(text):
                 continue
             age = int(m.group(1))
             ref_year = ref[0][0]
-            if 0 < age < 110:
+            if 10 <= age <= 105:  # a plausible age for someone on a watchlist; "(2)" or "aged 0" are not ages
                 years += [ref_year - age - 1, ref_year - age]
                 quotes.append(sentence)
                 break

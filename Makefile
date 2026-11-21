@@ -13,6 +13,8 @@ ml-validate:
 # submission: rule engine, standard library only
 submit-run:
 	$(PYTHON) system/run $(ML_DATA) output/dev.jsonl
+analyst-view:
+	$(PYTHON) -m screening_ml.analyst_view --data $(ML_DATA) --out artifacts/analyst_view.html
 submit-validate:
 	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output output/dev.jsonl --score $(ML_DATA)/practice_labels.jsonl
 ml-finetune:

@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screening Review</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#ffffff;--ink:#16181d;--muted:#5d6472;--line:#e3e6eb;--soft:#f0f2f5;
+  --accent:#2b59c3;--clear:#18794e;--clear-bg:#e6f4ec;--same:#b42318;--same-bg:#fdecea;
+  --review:#9a6700;--review-bg:#fff4d6;--hold:#7a3fc2;--hold-bg:#f1e9fb;--focus:#2b59c3;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1115;--panel:#171a21;--ink:#e8eaee;--muted:#9aa2b1;--line:#2a2f3a;--soft:#1e222b;
+  --accent:#7aa2ff;--clear:#5cc596;--clear-bg:#14301f;--same:#ff8a7a;--same-bg:#3a1714;
+  --review:#f0c050;--review-bg:#352a0c;--hold:#c4a1ff;--hold-bg:#2a1f3d;--focus:#7aa2ff;}}
+:root[data-theme="dark"]{
+  --bg:#0f1115;--panel:#171a21;--ink:#e8eaee;--muted:#9aa2b1;--line:#2a2f3a;--soft:#1e222b;
+  --accent:#7aa2ff;--clear:#5cc596;--clear-bg:#14301f;--same:#ff8a7a;--same-bg:#3a1714;
+  --review:#f0c050;--review-bg:#352a0c;--hold:#c4a1ff;--hold-bg:#2a1f3d;--focus:#7aa2ff;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:16px 20px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.top{display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+h1{font-size:18px;margin:0}
+.sub{color:var(--muted);font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:12px}
+.kpi{background:var(--soft);border-radius:10px;padding:10px 12px;cursor:pointer;border:1px solid transparent}
+.kpi:hover{border-color:var(--line)}
+.kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--muted);font-size:12px}
+.bar{display:flex;height:8px;border-radius:5px;overflow:hidden;margin-top:12px;background:var(--soft)}
+.bar i{display:block}
+.filters{display:flex;gap:8px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+input[type=search],select,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+input[type=search]{flex:1;min-width:200px}
+.chip{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;padding:5px 12px;font:inherit;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+label.tog{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}
+main{display:grid;grid-template-columns:minmax(280px,380px) 1fr;min-height:calc(100vh - 220px)}
+#list{border-right:1px solid var(--line);overflow:auto;max-height:calc(100vh - 200px);background:var(--panel)}
+.count{padding:8px 14px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
+.row{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.row:hover{background:var(--soft)}
+.row.sel{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.row .n{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .m{color:var(--muted);font-size:12px;grid-column:1/-1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;white-space:nowrap;align-self:start}
+.DIFFERENT_ENTITY{background:var(--clear-bg);color:var(--clear)}
+.SAME_ENTITY{background:var(--same-bg);color:var(--same)}
+.REVIEW{background:var(--review-bg);color:var(--review)}
+.held{background:var(--hold-bg);color:var(--hold)}
+#detail{padding:18px 22px;overflow:auto;max-height:calc(100vh - 200px)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 10px}
+.verdict{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.verdict .badge{font-size:14px;padding:5px 10px}
+.code{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.reason{font-size:15px;margin:10px 0 6px}
+.ids{display:flex;gap:6px;flex-wrap:wrap}
+.id{font-family:var(--mono);font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--accent);border-radius:6px;padding:2px 7px;cursor:pointer}
+.id:hover{border-color:var(--accent)}
+.gold{border-left:4px solid var(--accent)}
+.gold.bad{border-left-color:var(--same)}
+ol.path{margin:0;padding-left:20px}
+ol.path li{margin:3px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+table{border-collapse:collapse;width:100%}
+td{border-top:1px solid var(--line);padding:6px 4px;vertical-align:top}
+td:first-child{color:var(--muted);width:34%;white-space:nowrap}
+.checks .c{display:grid;grid-template-columns:22px 230px 1fr;gap:8px;padding:6px 0;border-top:1px solid var(--line)}
+.checks .c.off{color:var(--muted)}
+.checks .c.off .t{display:none}
+.dot{width:12px;height:12px;border-radius:50%;margin-top:4px;border:2px solid var(--line)}
+.on .dot{background:var(--accent);border-color:var(--accent)}
+.rec{font-family:var(--mono);font-size:12px;white-space:pre-wrap;background:var(--bg);border-radius:8px;padding:10px;max-height:320px;overflow:auto}
+.notes{white-space:pre-wrap;color:var(--muted);font-size:13px;max-height:180px;overflow:auto}
+.act{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button.p{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer}
+button.s{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer}
+textarea{width:100%;min-height:54px;margin-top:8px}
+.empty{color:var(--muted);padding:40px;text-align:center}
+.warn{color:var(--hold)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+@media (max-width:860px){main{grid-template-columns:1fr}#list{max-height:40vh;border-right:0;border-bottom:1px solid var(--line)}#detail{max-height:none;padding:16px}.two{grid-template-columns:1fr}.checks .c{grid-template-columns:22px 1fr}.checks .c .t{grid-column:2}header,.filters{padding-left:16px;padding-right:16px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><h1>Screening review</h1><span class="sub" id="meta"></span>
+    <span style="flex:1"></span><button class="s" id="theme" title="Toggle theme">◐</button></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="bar" id="bar" aria-hidden="true"></div>
+</header>
+<div class="filters" role="search">
+  <input type="search" id="q" placeholder="Search name, hit, alert or customer ID  ( / )">
+  <button class="chip" data-d="" aria-pressed="true">All</button>
+  <button class="chip" data-d="DIFFERENT_ENTITY" aria-pressed="false">Cleared</button>
+  <button class="chip" data-d="SAME_ENTITY" aria-pressed="false">Same entity</button>
+  <button class="chip" data-d="REVIEW" aria-pressed="false">Review</button>
+  <select id="code" aria-label="Reason code"><option value="">All reasons</option></select>
+  <label class="tog"><input type="checkbox" id="goldOnly"> practice labels</label>
+  <label class="tog"><input type="checkbox" id="heldOnly"> held by safety net</label>
+  <label class="tog"><input type="checkbox" id="ovOnly"> my overrides</label>
+</div>
+<main>
+  <div id="list" role="listbox" aria-label="Hits"></div>
+  <div id="detail"><div class="empty">Select a hit</div></div>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const H = DATA.hits, R = DATA.records;
+const LABEL = {DIFFERENT_ENTITY:"Cleared", SAME_ENTITY:"Same entity", REVIEW:"Review"};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const isHeld = h => /uncertain evidence/.test(h.reason);
+let ov = {}; try { ov = JSON.parse(localStorage.getItem("screening-overrides") || "{}"); } catch (e) {}
+const saveOv = () => { try { localStorage.setItem("screening-overrides", JSON.stringify(ov)); } catch (e) {} };
+let state = {q:"", d:"", code:"", gold:false, held:false, ov:false, sel:null};
+try { const t = localStorage.getItem("screening-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+document.getElementById("meta").textContent = `${H.length} hits · ${DATA.folder} · built ${DATA.built}`;
+const codes = [...new Set(H.map(h => h.code))].sort();
+document.getElementById("code").insertAdjacentHTML("beforeend", codes.map(c => `<option>${c}</option>`).join(""));
+
+function kpis(){
+  const n = H.length, c = k => H.filter(h => h.decision === k).length;
+  const g = H.filter(h => h.gold), right = g.filter(h => h.gold.decision === h.decision).length;
+  const unsafe = g.filter(h => h.decision === "DIFFERENT_ENTITY" && h.gold.decision !== "DIFFERENT_ENTITY").length;
+  const tiles = [
+    ["", n, "hits decided"],
+    ["DIFFERENT_ENTITY", c("DIFFERENT_ENTITY"), `cleared automatically (${Math.round(100*c("DIFFERENT_ENTITY")/n)}%)`],
+    ["SAME_ENTITY", c("SAME_ENTITY"), "same entity → compliance"],
+    ["REVIEW", c("REVIEW"), "sent to an analyst"],
+    ["gold", g.length ? `${right}/${g.length}` : "–", `practice labels right · ${unsafe} unsafe clears`],
+    ["held", H.filter(isHeld).length, "held by the safety net"],
+  ];
+  document.getElementById("kpis").innerHTML = tiles.map(([k, v, t]) =>
+    `<div class="kpi" data-k="${k}" tabindex="0"><b>${v}</b><span>${t}</span></div>`).join("");
+  document.querySelectorAll(".kpi").forEach(el => el.onclick = el.onkeydown = e => {
+    if (e.type === "keydown" && e.key !== "Enter") return;
+    const k = el.dataset.k;
+    state.gold = k === "gold"; state.held = k === "held";
+    state.d = ["DIFFERENT_ENTITY","SAME_ENTITY","REVIEW"].includes(k) ? k : "";
+    sync(); render();
+  });
+  document.getElementById("bar").innerHTML = ["DIFFERENT_ENTITY","SAME_ENTITY","REVIEW"].map(k =>
+    `<i class="${k}" style="width:${100*c(k)/n}%;background:currentColor;opacity:.75" title="${LABEL[k]} ${c(k)}"></i>`).join("");
+}
+
+function sync(){
+  document.querySelectorAll(".chip").forEach(b => b.setAttribute("aria-pressed", b.dataset.d === state.d));
+  document.getElementById("goldOnly").checked = state.gold;
+  document.getElementById("heldOnly").checked = state.held;
+  document.getElementById("ovOnly").checked = state.ov;
+  document.getElementById("code").value = state.code;
+}
+
+function filtered(){
+  const q = state.q.toLowerCase();
+  return H.filter(h => (!state.d || h.decision === state.d) && (!state.code || h.code === state.code)
+    && (!state.gold || h.gold) && (!state.held || isHeld(h)) && (!state.ov || ov[h.hit_id])
+    && (!q || [h.hit_id, h.alert_id, h.record, h.screened.name, h.hit.name, ...(h.hit.names || [])].join(" ").toLowerCase().includes(q)));
+}
+
+function render(){
+  const rows = filtered();
+  const list = document.getElementById("list");
+  list.innerHTML = `<div class="count">${rows.length} of ${H.length} hits</div>` + rows.map(h => {
+    const o = ov[h.hit_id];
+    return `<div class="row ${h.hit_id === state.sel ? "sel" : ""}" role="option" tabindex="0" data-id="${h.hit_id}">
+      <span class="n">${esc(h.screened.name)}</span>
+      <span class="badge ${isHeld(h) ? "held" : h.decision}">${isHeld(h) ? "Held" : LABEL[h.decision]}${o ? " ✎" : ""}</span>
+      <span class="m">${esc(h.hit.name)} · ${esc(h.hit.category || "")} · ${h.code}${h.gold ? " · ★" : ""}</span></div>`;
+  }).join("");
+  list.querySelectorAll(".row").forEach(el => { el.onclick = () => select(el.dataset.id);
+    el.onkeydown = e => { if (e.key === "Enter") select(el.dataset.id); }; });
+  if (!rows.find(h => h.hit_id === state.sel)) { if (rows[0]) select(rows[0].hit_id, false); else detail(null); }
+}
+
+function select(id, scroll = true){
+  state.sel = id;
+  document.querySelectorAll(".row").forEach(el => el.classList.toggle("sel", el.dataset.id === id));
+  const el = document.querySelector(`.row[data-id="${id}"]`); if (el && scroll) el.scrollIntoView({block:"nearest"});
+  detail(H.find(h => h.hit_id === id));
+}
+
+const ids = list => (list || []).map(i => `<button class="id" data-rec="${esc(i)}">${esc(i)}</button>`).join("");
+const src = list => list && list.length ? ` <span class="ids">${ids(list)}</span>` : "";
+
+function detail(h){
+  const box = document.getElementById("detail");
+  if (!h) { box.innerHTML = `<div class="empty">No hits match these filters</div>`; return; }
+  const comp = h.comparisons[0] || {person:null, checks:[]}, p = comp.person, x = h.hit;
+  const g = h.gold, o = ov[h.hit_id] || {};
+  const prow = p ? `
+    <tr><td>Records</td><td>${p.records.length ? ids(p.records) : "<i>none found: screened details</i>"}</td></tr>
+    <tr><td>Names on record</td><td>${p.names.map(n => esc(n.name)).join("<br>") || "–"}</td></tr>
+    <tr><td>Verified legal name</td><td>${p.verified_name ? esc(p.verified_name.name) + src(p.verified_name.src) : "–"}</td></tr>
+    <tr><td>Date of birth</td><td>${p.dob ? esc(p.dob.value) + (p.dob.verified ? " (verified)" : " (declared)") + src(p.dob.src) : "–"}</td></tr>
+    <tr><td>Countries</td><td>${p.countries.map(c => esc(c.country) + src(c.src)).join("<br>") || "–"}</td></tr>
+    <tr><td>Identity checks</td><td>${p.approved} approved · ${p.rejected} rejected/expired</td></tr>
+    ${p.unread.length ? `<tr><td class="warn">Unread notes</td><td>${ids(p.unread)}</td></tr>` : ""}` : "";
+  const hrow = `
+    <tr><td>Names</td><td>${x.names.map(esc).join("<br>")}</td></tr>
+    <tr><td>Listing</td><td>${esc(x.category)} · ${esc(x.type)} · match score ${esc(x.score)}</td></tr>
+    <tr><td>Date of birth</td><td>${x.dobs.length ? esc(x.dobs.join(" or ")) + ` <span class="code">from ${esc(x.dob_source)}</span>` + src(x.dob_evidence) : "–"}
+      ${x.dob_text ? `<div class="sub">“${esc(x.dob_text.slice(0, 220))}”</div>` : ""}</td></tr>
+    <tr><td>Countries</td><td>${x.countries.map(esc).join(", ") || "–"}</td></tr>
+    <tr><td>Earliest dated report</td><td>${esc(x.earliest_report || "–")}</td></tr>
+    ${x.deceased ? `<tr><td>Date of death</td><td>${esc(x.deceased)}</td></tr>` : ""}
+    ${x.position ? `<tr><td>Position / allegation</td><td>${esc(x.position)}</td></tr>` : ""}`;
+  const checks = comp.checks.map(c => `<div class="c ${c.fired ? "on" : "off"}"><span class="dot"></span>
+      <span class="code">${c.code}</span><span class="t">${esc(c.text)}${src(c.evidence)}</span></div>`).join("");
+  box.innerHTML = `
+    <div class="card">
+      <div class="verdict"><span class="badge ${isHeld(h) ? "held" : h.decision}">${LABEL[h.decision]}${isHeld(h) ? " · held by safety net" : ""}</span>
+        <span class="code">${h.code}</span><span class="code">${h.hit_id} · alert ${h.alert_id} · ${h.n_hits_in_alert} hit(s) · screened ${esc(h.screened_at)}</span></div>
+      <p class="reason">${esc(h.reason)}</p>
+      <div class="ids"><span class="sub">Customer record</span> ${h.record ? (h.record === "AMBIGUOUS" ? "<b>AMBIGUOUS</b>" : ids([h.record])) : "<i>none</i>"}
+        <span class="sub" style="margin-left:10px">Evidence</span> ${ids(h.evidence) || "–"}</div>
+    </div>
+    ${g ? `<div class="card gold ${g.decision === h.decision ? "" : "bad"}"><h2>Practice label</h2>
+      <b>${LABEL[g.decision]}</b> <span class="code">${g.codes.join(", ")}</span> — ${g.decision === h.decision ? "matches" : "<b>does not match</b>"} our decision
+      <div class="sub">${esc(g.reason || "")}</div></div>` : ""}
+    <div class="card"><h2>How the customer was found</h2><ol class="path">${h.path.map(s => `<li>${esc(s)}</li>`).join("")}</ol>
+      <div class="sub" style="margin-top:6px">Screened as <b>${esc(h.screened.name)}</b> · ${esc(h.screened.entity_type)} · DOB ${esc(h.screened.dob || "–")} · ${esc(h.screened.country || "no country")} · ${esc(h.screened.city || "no city")}</div></div>
+    <div class="two">
+      <div class="card"><h2>Customer</h2><table>${prow || "<tr><td>–</td></tr>"}</table></div>
+      <div class="card"><h2>Watchlist hit</h2><table>${hrow}</table>
+        ${x.notes ? `<details style="margin-top:8px"><summary class="sub">Profile notes</summary><div class="notes">${esc(x.notes)}</div></details>` : ""}</div>
+    </div>
+    <div class="card checks"><h2>Policy checks <span class="sub" style="text-transform:none;letter-spacing:0">(filled = fired; first fired clear wins, then confirm, else review)</span></h2>${checks}
+      ${h.comparisons.length > 1 ? `<div class="sub" style="margin-top:8px">${h.comparisons.length} people fit this alert; showing the first.</div>` : ""}</div>
+    <div class="card" id="recbox"><h2>Record</h2><div class="sub">Click any ID above to see the record.</div></div>
+    <div class="card"><h2>Analyst decision</h2>
+      <div class="act"><button class="s" data-a="agree">Agree</button>
+        <select id="ovd" aria-label="Override decision"><option value="">Override to…</option>
+          ${["DIFFERENT_ENTITY","SAME_ENTITY","REVIEW"].map(d => `<option value="${d}" ${o.decision === d ? "selected" : ""}>${LABEL[d]}</option>`).join("")}</select>
+        <button class="p" data-a="save">Save</button><button class="s" data-a="export">Export overrides</button>
+        <span class="sub" id="saved">${o.decision ? `Saved: ${LABEL[o.decision]} · ${esc(o.at)}` : ""}</span></div>
+      <textarea id="ovn" placeholder="Reason (required for an override)">${esc(o.note || "")}</textarea></div>`;
+  box.querySelectorAll("[data-rec]").forEach(b => b.onclick = () => showRec(b.dataset.rec));
+  box.querySelectorAll("[data-a]").forEach(b => b.onclick = () => act(h, b.dataset.a));
+  box.scrollTop = 0;
+}
+
+function showRec(id){
+  const r = R[id], box = document.getElementById("recbox");
+  box.innerHTML = `<h2>Record ${esc(id)}</h2>` + (r ? `<div class="rec">${esc(Object.entries(r).map(([k, v]) =>
+    `${k.padEnd(20)} ${typeof v === "object" ? JSON.stringify(v) : v}`).join("\n"))}</div>` : `<div class="sub">Not included in this page.</div>`);
+  box.scrollIntoView({block:"nearest", behavior:"smooth"});
+}
+
+function act(h, a){
+  const note = document.getElementById("ovn").value.trim(), d = document.getElementById("ovd").value;
+  const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  if (a === "agree") { ov[h.hit_id] = {decision:h.decision, note:note || "agree", at:now, agree:true}; }
+  else if (a === "save") {
+    if (!d) { document.getElementById("saved").textContent = "Pick a decision first"; return; }
+    if (d !== h.decision && !note) { document.getElementById("saved").textContent = "A reason is required to override"; return; }
+    ov[h.hit_id] = {decision:d, note, at:now, agree:d === h.decision};
+  } else if (a === "export") {
+    const lines = Object.entries(ov).map(([id, v]) => JSON.stringify({hit_id:id, system_decision:(H.find(x => x.hit_id === id) || {}).decision, analyst_decision:v.decision, note:v.note, at:v.at}));
+    const blob = new Blob([lines.join("\n") + "\n"], {type:"application/jsonl"});
+    const link = Object.assign(document.createElement("a"), {href:URL.createObjectURL(blob), download:"analyst_decisions.jsonl"});
+    link.click(); return;
+  }
+  saveOv(); render(); select(h.hit_id, false);
+}
+
+document.getElementById("q").oninput = e => { state.q = e.target.value; render(); };
+document.querySelectorAll(".chip").forEach(b => b.onclick = () => { state.d = b.dataset.d; sync(); render(); });
+document.getElementById("code").onchange = e => { state.code = e.target.value; render(); };
+document.getElementById("goldOnly").onchange = e => { state.gold = e.target.checked; render(); };
+document.getElementById("heldOnly").onchange = e => { state.held = e.target.checked; render(); };
+document.getElementById("ovOnly").onchange = e => { state.ov = e.target.checked; render(); };
+document.getElementById("theme").onclick = () => {
+  const dark = getComputedStyle(document.body).backgroundColor === "rgb(15, 17, 21)";
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("screening-theme", document.documentElement.dataset.theme); } catch (e) {}
+};
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea,select")) return;
+  if (e.key === "/") { e.preventDefault(); document.getElementById("q").focus(); }
+  if (e.key === "j" || e.key === "k") {
+    const rows = filtered(), i = rows.findIndex(h => h.hit_id === state.sel);
+    const n = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "j" ? 1 : -1)))]; if (n) select(n.hit_id);
+  }
+});
+kpis(); sync(); render();
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ network is trained on, because only 50 gold labels exist (see check_data.py).
 from dataclasses import dataclass, field
 
 from . import normalize as N
+from . import reasoning
 from .customer import screened_person
 
 DECISIONS = ["DIFFERENT_ENTITY", "SAME_ENTITY", "REVIEW"]
@@ -122,10 +123,10 @@ def compare(person, hit, screened_at):
         dob_agree = any(cust_dob[0] == h[0] and dob_agrees(cust_dob, h) for h in hit.dobs)
         dob_contra = all(dob_contradicted(cust_dob, h) for h in hit.dobs)
         year_gap = min(abs(cust_dob[0] - h[0]) for h in hit.dobs)
-        hit_years = ", ".join(N.fmt_date(h) for h in hit.dobs)
+        hit_years = " or ".join(N.fmt_date(h) for h in sorted(hit.dobs, key=N.date_key))
         if dob_contra:
             checks["DOB_MISMATCH"] = Check(True, dob_src + [e for e in hit.dob_evidence if not e.endswith("#dobs")],
-                                           f"The customer's date of birth is {N.fmt_date(cust_dob)} ({', '.join(dob_src) or 'screened'}) but the hit's {'profile notes put' if hit.dob_source == 'notes' else 'search results put' if hit.dob_source == 'search' else 'record gives'} its birth date at {hit_years}.")
+                                           f"The customer's date of birth is {N.fmt_date(cust_dob)} ({', '.join(dob_src) or 'screened'}) but the hit's {'profile notes put' if hit.dob_source == 'notes' else 'search results put' if hit.dob_source == 'search' else 'record gives'} its date of birth as {hit_years}.")
     elif cust_dob and hit.dobs and hit_company and person_company:  # incorporation dates
         dob_contra = all(dob_contradicted(cust_dob, h) for h in hit.dobs)
         dob_agree = any(dob_agrees(cust_dob, h) and cust_dob[0] == h[0] for h in hit.dobs)
@@ -162,9 +163,11 @@ def compare(person, hit, screened_at):
                 checks["NAME_MISMATCH_VERIFIED"] = Check(True, person.verified_name.sources,
                                                          f"The customer's verified legal name ({' '.join(vparts).title()}, {', '.join(person.verified_name.sources)}) agrees with none of the hit's names.")
 
+    held, held_ev = _safety_net(person, checks)
+
     # agreement codes
     loc_src = sorted({s for c in overlap for s in person.countries[c]})
-    name_txt = f"The customer's name agrees with the hit's name {matched_name}."
+    name_txt = f"The customer's name agrees with the hit's name {(matched_name or '').rstrip('. ')}."
     dob_txt = (f"The customer's date of birth {N.fmt_date(cust_dob)} ({', '.join(dob_src) or 'screened'}) agrees with the hit's "
                f"{' or '.join(N.fmt_date(h) for h in hit.dobs)}.") if cust_dob and hit.dobs else ""
     loc_txt = f"Both the customer and the hit are linked to {', '.join(sorted(overlap))}." if overlap else ""
@@ -184,12 +187,55 @@ def compare(person, hit, screened_at):
     elif not dob_agree:
         missing.append("the dates of birth neither agree nor contradict")
     parts = " ".join(t for t in (loc_txt, name_txt if name_agree else "") if t)
-    checks["INSUFFICIENT_DATA"] = Check(True, loc_src or cid,
-                                        (parts + " " if parts else "") + "Nothing in the customer's records contradicts the hit, and "
-                                        + (" and ".join(missing) or "the evidence is not enough to confirm it")
-                                        + ", so the hit can be neither cleared nor confirmed.")
+    if held:
+        text = ((parts + " " if parts else "") + " ".join(held)
+                + (" Otherwise " + " and ".join(missing) + "." if missing else "")
+                + " The hit is kept for a person to review rather than cleared on uncertain evidence.")
+        checks["INSUFFICIENT_DATA"] = Check(True, (loc_src or cid) + held_ev, text)
+    else:
+        checks["INSUFFICIENT_DATA"] = Check(True, loc_src or cid,
+                                            (parts + " " if parts else "") + "Nothing in the customer's records contradicts the hit, and "
+                                            + (" and ".join(missing) or "the evidence is not enough to confirm it")
+                                            + ", so the hit can be neither cleared nor confirmed.")
     return Comparison(person, hit, checks, name_agree, name_frac, name_matched, name_sim, name_usable,
                       matched_name, dob_agree, dob_contra, year_gap, overlap, age_at_report)
+
+
+SAFETY_NET = True  # switch off only to measure what it costs
+
+
+def _safety_net(person, checks):
+    """Un-fire clears that rest on evidence we may have misread (a wrong clear costs 60, a review 2-3).
+
+    1. LOCATION_MISMATCH while a note looks like it says where the customer lived but no country could be read.
+    2. NAME_MISMATCH_VERIFIED from a free-text note whose extracted name shares no part with the customer's
+       record names, or from a note we only partly understood: the name extraction may have grabbed the wrong words.
+    3. DOB_MISMATCH on an unverified (declared) date of birth while an identity note could not be fully read:
+       the verified date may be the one we missed.
+    """
+    if not SAFETY_NET:
+        return [], []
+    held, evidence = [], []
+    unread = list(person.unread_notes)
+    if checks["LOCATION_MISMATCH"].fired and unread:
+        checks["LOCATION_MISMATCH"] = Check(False)
+        held.append(f"The countries look different, but the customer's notes ({', '.join(unread[:3])}) mention "
+                    f"where they lived or their identity in a way that could not be read reliably.")
+        evidence += unread[:3]
+    vn = person.verified_name
+    if checks["NAME_MISMATCH_VERIFIED"].fired and vn and any(s.startswith("NOTE-") for s in vn.sources):
+        shares = any(N.parts_match(p, q) for f in person.names for q in f.value for p in vn.value)
+        if not shares or any(s in unread for s in vn.sources):
+            checks["NAME_MISMATCH_VERIFIED"] = Check(False)
+            held.append(f"The legal name read from {', '.join(vn.sources)} ({' '.join(vn.value).title()}) differs from "
+                        f"the hit's names, but it shares nothing with the customer's own records, so it may have been misread.")
+            evidence += vn.sources
+    if checks["DOB_MISMATCH"].fired and not person.dob_verified and any(n.startswith("NOTE-") for n in unread):
+        checks["DOB_MISMATCH"] = Check(False)
+        held.append("The declared date of birth contradicts the hit, but an identity note could not be fully read, "
+                    "so the verified date of birth may differ.")
+        evidence += [n for n in unread if n.startswith("NOTE-")][:2]
+    return held, evidence
 
 
 CLEAR_ORDER = ["ENTITY_TYPE_MISMATCH", "DECEASED", "TEMPORAL_IMPOSSIBILITY", "DOB_MISMATCH",
@@ -219,6 +265,7 @@ class HitCase:
     teacher_code: str
     teacher_evidence: list
     teacher_reason: str
+    alert: dict = None
 
 
 def decide_case(resolution, hit_facts, alert):
@@ -233,14 +280,14 @@ def decide_case(resolution, hit_facts, alert):
     if len(decisions) > 1:
         code = "AMBIGUOUS_CUSTOMER_RECORD"
         evidence = sorted({p.primary for p in persons if p.primary})
-        reason = (f"{len(persons)} people in the system of record fit the alert ({', '.join(evidence)}) and they lead to "
-                  f"different decisions, so a person must decide which one was screened.")
+        per_person = [(p.primary, CODE_DECISION[c], c) for p, c in zip(persons, codes)]
+        reason = reasoning.compose(resolution, alert, None, code, "REVIEW", "", per_person)
     else:
         code = codes[0]
         evidence = comps[0].checks[code].evidence
-        reason = comps[0].checks[code].text
+        reason = reasoning.compose(resolution, alert, comps[0], code, CODE_DECISION[code], comps[0].checks[code].text)
     return HitCase(hit_facts.hit_id, alert["alert_id"], resolution, comps, record,
-                   CODE_DECISION[code], code, clean_evidence(evidence), reason.strip())
+                   CODE_DECISION[code], code, clean_evidence(evidence), reason.strip(), alert)
 
 
 def clean_evidence(ids):
@@ -254,5 +301,6 @@ def evidence_for(case, code):
         return case.teacher_evidence, case.teacher_reason
     check = case.comparisons[0].checks.get(code)
     if check and check.fired and check.text:
-        return clean_evidence(check.evidence), check.text.strip()
+        text = reasoning.compose(case.resolution, case.alert or {}, case.comparisons[0], code, CODE_DECISION[code], check.text)
+        return clean_evidence(check.evidence), text
     return case.teacher_evidence, case.teacher_reason
