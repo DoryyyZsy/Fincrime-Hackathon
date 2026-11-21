@@ -271,6 +271,15 @@ Two pages with a switch button on each:
   mark them Cleared / Same entity / Review, return them to the system's decision, remove them from the list or
   restore them, and export the edited list. The headline numbers update as the list changes.
 
+- **Decision review** (`/review.html`): why each hit was decided, in queues. Confirmed matches (`SAME_ENTITY`) go
+  straight to the **MLRO**; uncertain hits (`REVIEW`) go to an **analyst**, who can clear, confirm and send to the MLRO,
+  escalate when unsure, or request information; clearances close automatically, with a fixed 5% **QA** sample (chosen
+  by hit-ID hash, so the same hits every run). Each hit shows the system's reason, the evidence chips, *What to check*
+  (fixed templates from the facts, no model: what is missing, e.g. "the hit's date of birth comes from its profile
+  notes, not the list record"), both sides' facts, the policy checks and the cited records. Every action needs the
+  reviewer's name and a reason and is appended, UTC-stamped, to `data/screening/review/audit_log.jsonl`
+  (git-ignored; `--audit` to move it). `?hit=H-xxxxxx` opens one hit.
+
 The server binds to 127.0.0.1 only; the pages show customer data, so never expose it.
 
 ## Analyst screen

@@ -6,6 +6,8 @@
   /management.html   management review of every hit, with an editable hit list
   POST /api/check    run the screening engine on one customer (JSON in, JSON out)
   GET  /api/examples demo presets taken from the development set
+  /review.html       decision review: why each hit was decided, analyst / MLRO / QA queues, audit log
+  GET  /api/review/queue, GET /api/review/hit?id=H-xxxxxx, POST /api/review/action
 
 The pages show customer data from the data folder: keep the server local and never expose it.
 """
@@ -23,17 +25,20 @@ from .compare import decide_case
 from .customer import resolve
 from .data import DataRoom
 from .hit import build_hit
+from .review_data import ReviewBook
 
 HERE = os.path.dirname(__file__)
 STAFF_PAGE = os.path.join(HERE, "staff_view.html")
+REVIEW_PAGE = os.path.join(HERE, "review_view.html")
 MAX_BODY = 20_000
 DEMO_HITS = ["H-D861DA", "H-582410", "H-FF3096", "H-02115F", "H-13E1CF"]  # clear, match, review, company match, too young
 
 
 class Engine:
-    def __init__(self, folder):
+    def __init__(self, folder, audit_path):
         t0 = time.time()
         self.room = DataRoom(folder)
+        self.review = ReviewBook(self.room, self._present, audit_path)
         self.profiles = self._unique_profiles()
         payload = analyst_view.build(folder)
         with open(analyst_view.TEMPLATE, encoding="utf-8") as handle:
@@ -211,13 +216,24 @@ def make_handler(engine):
                     self._send(200, handle.read(), "text/html; charset=utf-8")
             elif path in ("/management.html", "/analyst_view.html"):
                 self._send(200, engine.management_html, "text/html; charset=utf-8")
+            elif path == "/review.html":
+                with open(REVIEW_PAGE, encoding="utf-8") as handle:
+                    self._send(200, handle.read(), "text/html; charset=utf-8")
+            elif path == "/api/review/queue":
+                self._send(200, json.dumps(engine.review.queue(), ensure_ascii=False), "application/json")
+            elif path == "/api/review/hit":
+                from urllib.parse import parse_qs, urlparse
+                hid = (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
+                found = engine.review.hit(hid)
+                self._send(200 if found else 404, json.dumps(found or {"error": "unknown hit"}, ensure_ascii=False),
+                           "application/json")
             elif path == "/api/examples":
                 self._send(200, json.dumps(engine.examples(), ensure_ascii=False), "application/json")
             else:
                 self._send(404, "not found", "text/plain")
 
         def do_POST(self):
-            if self.path != "/api/check":
+            if self.path not in ("/api/check", "/api/review/action"):
                 return self._send(404, "not found", "text/plain")
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0 or length > MAX_BODY:
@@ -226,7 +242,7 @@ def make_handler(engine):
                 form = json.loads(self.rfile.read(length).decode("utf-8"))
                 if not isinstance(form, dict):
                     raise ValueError("expected an object")
-                result = engine.check(form)
+                result = engine.check(form) if self.path == "/api/check" else engine.review.act(form)
             except Exception as error:  # never crash the demo
                 result = {"error": f"Could not run the check ({type(error).__name__})."}
             self._send(200, json.dumps(result, ensure_ascii=False), "application/json")
@@ -241,10 +257,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", default="data/screening/dev")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--audit", default="data/screening/review/audit_log.jsonl",
+                    help="append-only log of reviewer actions (holds customer IDs: keep it out of git)")
     args = ap.parse_args(argv)
-    engine = Engine(args.data)
+    engine = Engine(args.data, args.audit)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(engine))
-    print(f"open http://127.0.0.1:{args.port}/staff.html  (management: /management.html)")
+    print(f"open http://127.0.0.1:{args.port}/staff.html  (management: /management.html, decision review: /review.html)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

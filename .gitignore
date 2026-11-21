@@ -1,5 +1,6 @@
 # Hackathon data: participants only, never commit (see data/screening/BRIEF.md)
 data/screening/dev/
+data/screening/review/
 data/screening/unseen/
 
 # ML environment and training outputs
