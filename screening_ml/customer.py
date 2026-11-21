@@ -56,6 +56,11 @@ class Person:
     # A KYC note was present but could not be read as a passed check. Its document
     # country and DOB are unknown, not known to contradict the hit.
     identity_unreadable: bool = False
+    # Regex and the optional model disagreed about a birth date, so the date is unused.
+    dob_withheld: bool = False
+    # The birth date came only from a model quote that was checked against the note.
+    llm_dob_only: bool = False
+    cities: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -101,7 +106,7 @@ def _search_candidates(room, screened):
     return sorted(cid for cid in pool if _screen_fits(room, cid, screened))
 
 
-def resolve(room, alert):
+def resolve(room, alert, extractions=None):
     screened = dict(alert["customer"])
     if alert.get("account_ref"):
         link, linked = "account", list(room.holders_by_account.get(alert["account_ref"], []))
@@ -125,7 +130,7 @@ def resolve(room, alert):
         if root in seen:
             continue
         seen.add(root)
-        persons.append(build_person(room, cid, alert.get("screened_at")))
+        persons.append(build_person(room, cid, alert.get("screened_at"), extractions))
     return Resolution(link, candidates, persons, screened)
 
 
@@ -248,7 +253,7 @@ def _kyc_note_identity(note, screened_at=None):
     return {"name": name, "dob": dob, "countries": countries, "date": created}
 
 
-def build_person(room, cid, screened_at=None):
+def build_person(room, cid, screened_at=None, extractions=None):
     root = room.person_of.get(cid, cid)
     records = sorted(room.records_of_person.get(root, [cid]))
     primary = room.customer_by_id[cid]
@@ -261,6 +266,7 @@ def build_person(room, cid, screened_at=None):
     # and the declared record DOB must not clear the hit in its place: that DOB is
     # often a typo the check was meant to replace (principle 4).
     discarded_kyc_note = False
+    dob_conflict = False
     for rid in records:
         c = room.customer_by_id[rid]
         for f in ("full_name", "preferred_name", "login_name"):
@@ -288,33 +294,44 @@ def build_person(room, cid, screened_at=None):
                                  N.parse_date(k.get("verified_dob")), k["check_id"]))
 
         for note in room.notes_by_email.get((c.get("email") or "").lower(), []):
-            if note.get("channel") == "kyc":
-                ident = _kyc_note_identity(note, screened_at)
-                if ident:
-                    for country in sorted(ident["countries"]):
-                        person.countries.setdefault(country, []).append(note["note_id"])
-                    verified.append((ident["date"], ident["name"], ident["dob"], note["note_id"]))
+            if extractions is None:
+                if note.get("channel") == "kyc":
+                    ident = _kyc_note_identity(note, screened_at)
+                    if ident:
+                        for country in sorted(ident["countries"]):
+                            person.countries.setdefault(country, []).append(note["note_id"])
+                        verified.append((ident["date"], ident["name"], ident["dob"], note["note_id"]))
+                    else:
+                        discarded_kyc_note = True
                 else:
-                    discarded_kyc_note = True
-            else:
-                # Any country a support note names is tied to the customer. Gating on
-                # "lived" / "work" drops the country when the sentence is reworded
-                # ("stayed", "job"), and the missing country becomes a LOCATION_MISMATCH
-                # clearance. An extra country can only remove that clearance.
-                for country in sorted(N.countries_in_text(note.get("text") or "")):
-                    person.countries.setdefault(country, []).append(note["note_id"])
+                    # Any country a support note names is tied to the customer. Gating on
+                    # "lived" / "work" drops the country when the sentence is reworded
+                    # ("stayed", "job"), and the missing country becomes a LOCATION_MISMATCH
+                    # clearance. An extra country can only remove that clearance.
+                    for country in sorted(N.countries_in_text(note.get("text") or "")):
+                        person.countries.setdefault(country, []).append(note["note_id"])
+                continue
+            from .llm_extract import apply_customer_note
+            discarded, conflict = apply_customer_note(person, note, screened_at, extractions, verified, _kyc_note_identity)
+            discarded_kyc_note = discarded_kyc_note or discarded
+            dob_conflict = dob_conflict or conflict
 
+    llm_only = False
     if verified:  # principle 4: the most recent approved identity check wins
         verified.sort(key=lambda v: N.date_key(v[0]))
-        date, name, dob, source = verified[-1]
+        last = verified[-1]
+        date, name, dob, source = last[0], last[1], last[2], last[3]
+        llm_only = bool(last[4]) if len(last) > 4 else False
         if name:
             person.verified_name = Fact(N.name_parts(name, company), [source])
         if dob:
             person.dob, person.dob_verified = Fact(dob, [source]), True
+            person.llm_dob_only = llm_only
     if person.dob is None and record_dobs and not discarded_kyc_note:
         own = [f for f in record_dobs if f.sources[0] == cid]
         person.dob = (own or record_dobs)[0]
     person.identity_unreadable = discarded_kyc_note
+    person.dob_withheld = dob_conflict
     return person
 
 

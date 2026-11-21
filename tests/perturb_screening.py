@@ -166,8 +166,12 @@ def _read_jsonl(path):
     return rows
 
 
-def _run(system, folder, output):
-    subprocess.run([sys.executable, system, folder, output], check=True, stdout=subprocess.DEVNULL)
+def _run(system, folder, output, extra_env=None):
+    env = os.environ.copy()
+    env["SCREENING_LLM"] = "0"
+    if extra_env:
+        env.update(extra_env)
+    subprocess.run([sys.executable, system, folder, output], check=True, stdout=subprocess.DEVNULL, env=env)
 
 
 def _score(validate, folder, output, labels):
@@ -240,6 +244,7 @@ def main(argv):
         code, text = _score(args.validate, args.data, baseline, labels)
         base = _metrics(baseline, labels, baseline)
         base["problems"] = code
+        rules_outputs = {"unperturbed": baseline}
         rows = [("unperturbed", base, text)]
         for name, filename, mutate in PERTURBATIONS:
             folder = os.path.join(work, name)
@@ -251,22 +256,51 @@ def main(argv):
             metrics = _metrics(output, labels, baseline)
             metrics["problems"] = code
             rows.append((name, metrics, text))
+            rules_outputs[name] = output
+
+        print(f"{'perturbation':<20} {'right':>8} {'score':>7} {'unsafe':>7} {'flips':>7} {'problems':>9}  decisions")
+        failed = False
+        for name, metrics, _text in rows:
+            decisions = " ".join(f"{key[0]}={value}" for key, value in sorted(metrics["decisions"].items()))
+            print(
+                f"{name:<20} {metrics['right']:>3}/{metrics['n']:<4} {metrics['score']:>6.1f} "
+                f"{metrics['unsafe']:>7} {metrics['flips']:>7} {metrics['problems']:>9}  {decisions}"
+            )
+            if metrics["unsafe"]:
+                failed = True
+                print(f"  unsafe: {', '.join(metrics['unsafe_ids'])}")
+            if metrics["problems"]:
+                failed = True
+
+        # Rules + an offline model stand-in. No OpenRouter key is required. The stand-in
+        # agrees with the regex (or says unknown), so it must not open a new clearance.
+        print("\nrules+mock-llm (SCREENING_LLM_MOCK=1, no network)", file=sys.stderr)
+        mock_env = {"SCREENING_LLM": "1", "SCREENING_LLM_MOCK": "1"}
+        llm_rows = []
+        for name, filename, mutate in [("unperturbed", None, None)] + list(PERTURBATIONS):
+            if name == "unperturbed":
+                folder = args.data
+            else:
+                folder = os.path.join(work, "llm-" + name)
+                _copy_room(args.data, folder, filename, mutate)
+            output = os.path.join(work, "llm-" + name + ".jsonl")
+            _run(args.system, folder, output, mock_env)
+            code, _text = _score(args.validate, folder, output, labels)
+            metrics = _metrics(output, labels, rules_outputs[name])
+            metrics["problems"] = code
+            llm_rows.append((name, metrics))
     finally:
         shutil.rmtree(work, ignore_errors=True)
-
-    print(f"{'perturbation':<20} {'right':>8} {'score':>7} {'unsafe':>7} {'flips':>7} {'problems':>9}  decisions")
-    failed = False
-    for name, metrics, _text in rows:
-        decisions = " ".join(f"{key[0]}={value}" for key, value in sorted(metrics["decisions"].items()))
+    print(f"{'rules+mock':<20} {'right':>8} {'score':>7} {'unsafe':>7} {'newclear':>9} {'problems':>9}")
+    for name, metrics in llm_rows:
         print(
             f"{name:<20} {metrics['right']:>3}/{metrics['n']:<4} {metrics['score']:>6.1f} "
-            f"{metrics['unsafe']:>7} {metrics['flips']:>7} {metrics['problems']:>9}  {decisions}"
+            f"{metrics['unsafe']:>7} {metrics['flips']:>9} {metrics['problems']:>9}"
         )
-        if metrics["unsafe"]:
+        if metrics["unsafe"] or metrics["flips"] or metrics["problems"]:
             failed = True
-            print(f"  unsafe: {', '.join(metrics['unsafe_ids'])}")
-        if metrics["problems"]:
-            failed = True
+            if metrics["unsafe_ids"]:
+                print(f"  unsafe: {', '.join(metrics['unsafe_ids'])}")
     return 1 if failed else 0
 
 

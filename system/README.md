@@ -116,15 +116,56 @@ dev set with `PYTHONHASHSEED=0` and `PYTHONHASHSEED=1` were byte-identical.
 
 ## Model and prompts
 
-None. Every step of POLICY.md can be computed exactly, and a language model would add cost, latency and
-run-to-run variation (10% of the score is reproducibility). The free-text extractors in `hit.py` and
-`customer.py` are the one place where an LLM fallback (via OpenRouter, temperature 0, cached) would help with
-wordings the regexes miss.
+The decision is always the rule engine. An optional extractor in `screening_ml/llm_extract.py` may read
+free text first, and only through OpenRouter (`POST https://openrouter.ai/api/v1/chat/completions`, stdlib
+`urllib`, no SDK). It runs when `OPENROUTER_API_KEY` is set. `SCREENING_LLM=0` forces the regex path even
+if a key is present. No key, a timeout, a bad status, or JSON that fails the schema: that text is unknown
+and the regex stands. Nothing is guessed.
+
+Pinned model: `google/gemini-2.5-flash`. `temperature` is 0, `reasoning.max_tokens` is 0 (no thinking
+tokens), and `max_tokens` is 2500. Four fixed prompts, one per text kind:
+
+| Prompt | Text | What it must return |
+|---|---|---|
+| `PROMPT_NOTE` | KYC note | `passed` / `rejected` / `unclear`, a date of birth only when the note states one, countries and cities |
+| `PROMPT_NOTE` | support note | the same shape; outcome is ignored and the note is not an identity check |
+| `PROMPT_PROFILE` | first paragraph of a hit profile | birth years (aged 45 in March 2019 → 1973 and 1974) and places |
+| `PROMPT_SEARCH` | web snippet | whether it is this listed person or a namesake (`high` / `low`), plus birth years and countries |
+
+Every fact carries a quote. The quote has to be a substring of the source (whitespace aside), and a birth
+year has to be one the quote can support. A country is added only when the quote contains that country.
+
+How a model fact meets the regex:
+
+- Countries are a union. An extra country can only remove a `LOCATION_MISMATCH`.
+- A date of birth is used when the regex and the model agree, or when one of them is unknown. If they
+  disagree, the date is unknown. A date the model alone supplies can clear (`DOB_MISMATCH` or
+  `TEMPORAL_IMPOSSIBILITY`) only because its quote was checked. Any other new clearance is refused and the
+  regex decision is kept.
+- A KYC note is evidence only when the regex says it passed and the model does not say `rejected` or
+  `unclear`. The model cannot revive a note the regex rejected. A discarded note does not leave the
+  declared date of birth, or the remaining countries, free to clear the hit.
+- A search snippet contributes a birth date only when the model attributes it to this person with `high`
+  confidence, or when the model was not asked and the regex attribution already passed. A namesake call
+  drops the snippet and blocks a location clearance from taking its place.
+
+Calls are batched 8 texts at a time and run 8 at a time. Responses are cached for the run under
+SHA-256 of `(model, prompt, item text)`. The dev folder is about 2,600 texts and about 320 calls. At the
+posted rate of $0.30 / $2.50 per million tokens that is about $0.25 if every text is sent. A healthy run
+on ~550 hits should stay well under 30 minutes; a batch that times out (12s, one retry) falls back to the
+regex for those texts only.
+
+Within one run the cache, temperature 0, and hit order make the file deterministic given the responses.
+Across runs the provider can still differ. A difference can turn a clearance into a review; it cannot
+open a clearance the regex did not already have unless the new birth date is quoted from the text. With
+no key the output is the regex file, byte-identical across `PYTHONHASHSEED` values. This environment had
+no `OPENROUTER_API_KEY`. `SCREENING_LLM_MOCK=1` is an offline stand-in that agrees with the regex, used
+by the tests, and on the dev set it reproduces the regex file exactly.
 
 We also built a small neural network on top of these features (`screening_ml/`, PyTorch) as an experiment.
-It is not part of this system. `system/run` imports only the stdlib rule modules (`data`, `normalize`,
-`customer`, `hit`, `compare`). The network's `rule_guard` can only turn a rule clearance into `REVIEW`, it
-is seed-unstable, and it needs PyTorch, so the submitted path is the rule engine (see `screening_ml/README.md`).
+It is not part of this system. `system/run` does not import it. The network's `rule_guard` can only turn a
+rule clearance into `REVIEW`, it is seed-unstable, and it needs PyTorch, so the submitted path is the rule
+engine (see `screening_ml/README.md`).
 
 ## Time and cost
 
@@ -174,12 +215,15 @@ no date of birth, so nothing contradicts it and nothing confirms it.
 ## Checks
 
 `tests/test_screening_extract.py` is stdlib `unittest` (slash dates, KYC cues, rejection phrases, age paraphrases).
+`tests/test_llm_extract.py` checks quotes, disagreement, the clearance guard, the cache, and a rejected
+model outcome, with a fake transport and no network.
 `tests/perturb_screening.py <data folder>` rebuilds the folder four ways and scores each with `validate.py`:
 KYC-note `created_at` shifted by two days, residence verbs paraphrased (`stayed`, `job`, …), age wording
 paraphrased, and KYC notes rewritten as "not verified / did not pass / resubmit" with the birth year moved.
 On the dev folder the four perturbed runs have 0 unsafe clearances and 0 decisions that flip to
 `DIFFERENT_ENTITY`. The rejected-note run reviews more hits (practice score 67.6) because those notes were
-real passes and dropping them removes DOB and document-country evidence.
+real passes and dropping them removes DOB and document-country evidence. The same script then reruns every
+copy with `SCREENING_LLM_MOCK=1` and checks that the stand-in opens no new clearance against the regex file.
 
 ## Known limits
 

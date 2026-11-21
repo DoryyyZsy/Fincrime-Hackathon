@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Screening hit adjudication: system/run <data folder> <output file>
 
-Reads only <data folder> (JSON Lines, dev or unseen format) and writes one JSON line per hit.
-Python 3 standard library only, no network, no LLM. Deterministic: the same input gives the same file.
+Reads only <data folder> and writes one JSON line per hit. The rule engine decides
+every hit. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
+OpenRouter model first and then checked against the regex extractors. No key,
+SCREENING_LLM=0, or any model failure uses the regex engine alone.
 """
-import json
 import os
 import sys
 import time
@@ -12,26 +13,12 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-try:  # the SOP engine lives in screening_ml/ next to system/ (stdlib-only modules)
-    from screening_ml.compare import decide_case
-    from screening_ml.customer import resolve
+try:  # stdlib modules only; the model client uses urllib
     from screening_ml.data import DataRoom
-    from screening_ml.hit import build_hit
+    from screening_ml.llm_extract import LlmClient
+    from screening_ml.pipeline import adjudicate, write_rows
 except ImportError as error:
     sys.exit(f"cannot import the engine from {ROOT}/screening_ml: {error}")
-
-
-def fallback(hit, alert_id, why, resolution=None):
-    """Never crash and never clear on unexpected data: send the hit to a person."""
-    record = None
-    if resolution is not None and resolution.persons:
-        record = "AMBIGUOUS" if len(resolution.persons) > 1 else resolution.persons[0].primary
-    return {
-        "hit_id": hit["hit_id"], "alert_id": alert_id, "decision": "REVIEW", "reason_code": "INSUFFICIENT_DATA",
-        "customer_record_id": record,
-        "reason": f"The system could not evaluate this hit automatically ({why}), so a person must review it.",
-        "evidence": [],
-    }
 
 
 def main(argv):
@@ -40,38 +27,21 @@ def main(argv):
     folder, out_path = argv[1], argv[2]
     t0 = time.time()
     room = DataRoom(folder)
-
-    rows, errors = [], 0
-    resolutions = {}
-    for hit in room.hits:  # every hit gets exactly one line, in hits.jsonl order
-        alert = room.alert_by_id.get(hit.get("alert_id"))
-        if alert is None:
-            rows.append(fallback(hit, hit.get("alert_id"), "its alert is missing"))
-            errors += 1
-            continue
-        try:
-            if alert["alert_id"] not in resolutions:
-                resolutions[alert["alert_id"]] = resolve(room, alert)
-            case = decide_case(resolutions[alert["alert_id"]], build_hit(room, hit), alert)
-            rows.append({
-                "hit_id": case.hit_id, "alert_id": case.alert_id, "decision": case.teacher_decision,
-                "reason_code": case.teacher_code, "customer_record_id": case.customer_record_id,
-                "reason": case.teacher_reason, "evidence": case.teacher_evidence,
-            })
-        except Exception as error:  # robustness on unseen data beats a crash
-            rows.append(fallback(hit, alert["alert_id"], type(error).__name__, resolutions.get(alert["alert_id"])))
-            errors += 1
-
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    with open(out_path, "w", encoding="utf-8", newline="\n") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=False) + "\n")
-
+    client = LlmClient.from_env()
+    rows, errors, stats = adjudicate(room, client)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    write_rows(out_path, rows)
     counts = {}
     for row in rows:
         counts[row["decision"]] = counts.get(row["decision"], 0) + 1
-    print(f"wrote {len(rows)} lines to {out_path} in {time.time() - t0:.1f}s: {counts}"
-          + (f"; {errors} hits fell back to REVIEW after an error" if errors else ""), file=sys.stderr)
+    message = f"wrote {len(rows)} lines to {out_path} in {time.time() - t0:.1f}s: {counts}"
+    if errors:
+        message += f"; {errors} hits fell back to REVIEW after an error"
+    if stats:
+        message += "; " + stats
+    elif client is None:
+        message += "; regex only (no OpenRouter key)"
+    print(message, file=sys.stderr)
 
 
 if __name__ == "__main__":

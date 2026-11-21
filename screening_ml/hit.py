@@ -48,6 +48,12 @@ class HitFacts:
     dob_evidence: list = field(default_factory=list)   # SR ids or "H-xxx#field"
     dob_text: str = ""
     countries: set = field(default_factory=set)
+    cities: list = field(default_factory=list)
+    # Regex and the optional model disagreed, or a search hit was rejected, so no
+    # birth date from that text is used and a location clearance may not replace it.
+    dob_withheld: bool = False
+    # Birth years came only from a model quote checked against the profile or snippet.
+    llm_dob_only: bool = False
     earliest_report: tuple = None
     deceased: tuple = None
     category: str = ""
@@ -141,7 +147,7 @@ def search_key(name):
     return " ".join(sorted(re.sub(r"[^a-z0-9\s]", " ", folded).split()))
 
 
-def build_hit(room, hit):
+def build_hit(room, hit, extractions=None):
     company = hit.get("entity_type") == "Company"
     facts = HitFacts(hit_id=hit["hit_id"], entity_type=hit.get("entity_type"), rich=bool(hit.get("primary_category")))
     names = [hit.get("name"), hit.get("best_matching_name"),
@@ -167,24 +173,28 @@ def build_hit(room, hit):
     if facts.dobs:
         facts.dob_source, facts.dob_evidence = "field", [f"{hit['hit_id']}#dobs"]
     notes = hit.get("profile_notes") or ""
-    if not facts.dobs and not company:
-        first_para = re.split(r"\n\s*\n", notes.strip())[0] if notes.strip() else ""
-        dobs, quote = extract_ages(first_para)
-        if dobs:
-            facts.dobs, facts.dob_source, facts.dob_text = dobs, "notes", quote
-            facts.dob_evidence = [f"{hit['hit_id']}#profile_notes"]
-    if not facts.dobs and not company:
-        for s in room.search_by_query.get(search_key(hit.get("name") or ""), []):
-            snippet = s.get("snippet") or ""
-            if facts.phrase.lower() not in snippet.lower():
-                continue
-            if not (N.countries_in_text(snippet) & facts.countries):
-                continue
-            dobs, quote = extract_ages(snippet)
+    if extractions is None:
+        if not facts.dobs and not company:
+            first_para = re.split(r"\n\s*\n", notes.strip())[0] if notes.strip() else ""
+            dobs, quote = extract_ages(first_para)
             if dobs:
-                facts.dobs, facts.dob_source, facts.dob_text = dobs, "search", quote
-                facts.dob_evidence = [s["result_id"]]
-                break
+                facts.dobs, facts.dob_source, facts.dob_text = dobs, "notes", quote
+                facts.dob_evidence = [f"{hit['hit_id']}#profile_notes"]
+        if not facts.dobs and not company:
+            for s in room.search_by_query.get(search_key(hit.get("name") or ""), []):
+                snippet = s.get("snippet") or ""
+                if facts.phrase.lower() not in snippet.lower():
+                    continue
+                if not (N.countries_in_text(snippet) & facts.countries):
+                    continue
+                dobs, quote = extract_ages(snippet)
+                if dobs:
+                    facts.dobs, facts.dob_source, facts.dob_text = dobs, "search", quote
+                    facts.dob_evidence = [s["result_id"]]
+                    break
+    else:
+        from .llm_extract import apply_hit_extractions
+        apply_hit_extractions(facts, hit, room, extractions, extract_ages, search_key, N.countries_in_text)
 
     reports = [N.parse_date(m) for m in DATED_REPORT.findall(notes)]
     reports = [r for r in reports if r]

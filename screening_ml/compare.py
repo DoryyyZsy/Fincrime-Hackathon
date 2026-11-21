@@ -153,7 +153,14 @@ def compare(person, hit, screened_at):
         # Name + DOB agreeing turns a country difference into REVIEW. So does an
         # identity note we could not read: its document country is unknown, and a
         # clearance would treat that unknown as a contradiction.
-        if not (name_agree and dob_agree) and not getattr(person, "identity_unreadable", False):
+        # A withheld birth date, or an identity note we could not read, is unknown.
+        # Clearing on the countries that remain would treat that unknown as a contradiction.
+        withheld = (
+            getattr(person, "identity_unreadable", False)
+            or getattr(person, "dob_withheld", False)
+            or getattr(hit, "dob_withheld", False)
+        )
+        if not (name_agree and dob_agree) and not withheld:
             checks["LOCATION_MISMATCH"] = Check(True, srcs,
                                                 f"The customer is linked only to {', '.join(sorted(cust_countries))} but the hit is linked only to {', '.join(sorted(hit.countries))}.")
 
