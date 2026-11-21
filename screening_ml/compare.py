@@ -3,7 +3,7 @@
 `teacher_decision` applies POLICY.md principles 6-7 exactly as written. It produces the silver labels the
 network is trained on, because only 50 gold labels exist (see check_data.py).
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from . import normalize as N
 from . import reasoning
@@ -84,8 +84,28 @@ def _before(a, b):
     return a_late < b_early
 
 
+MIN_LISTED_AGE = 16
+
+
+def _plausible_hit_dobs(hit, screened_at):
+    """Drop hit birth dates that would make the listed person a child at screening.
+
+    A designation, report or appointment date misread as a birth date lands within a few years of screening.
+    Such a date can fake a DOB contradiction and clear a real match, so it is unknown instead; if every reading
+    goes, the birth date is withheld and no location clearance may stand in for it."""
+    s_date = N.parse_date(screened_at)
+    if not s_date or not hit.dobs or hit.entity_type == "Company":
+        return hit
+    kept = [d for d in hit.dobs if s_date[0] - d[0] >= MIN_LISTED_AGE]
+    if len(kept) == len(hit.dobs):
+        return hit
+    return replace(hit, dobs=kept, dob_withheld=hit.dob_withheld or not kept,
+                   dob_source=hit.dob_source if kept else "none", dob_evidence=hit.dob_evidence if kept else [])
+
+
 # ------------------------------------------------------------------ comparison
 def compare(person, hit, screened_at):
+    hit = _plausible_hit_dobs(hit, screened_at)
     person_company = person.entity_type == "Company"
     hit_company = hit.entity_type == "Company"
     checks = {code: Check(False) for code in REASON_CODES}

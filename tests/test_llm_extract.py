@@ -154,8 +154,9 @@ class Client(unittest.TestCase):
 
 class OnAHit(unittest.TestCase):
     def test_quoted_age_fills_a_missing_birth_year_and_can_clear(self):
-        text = "Investigators noted he had turned 45 by the time of the March 2019 sentencing."
-        quote = "turned 45 by the time of the March 2019"
+        # a wording the regex cannot read, so only the model's checked quote supplies the birth year
+        text = "Investigators noted that by the March 2019 sentencing she had 45 birthdays behind her."
+        quote = "by the March 2019 sentencing she had 45 birthdays"
         hit = {
             "hit_id": "H-000001", "entity_type": "Individual", "name": "Jane Doe",
             "profile_notes": text, "categories": ["adverse media"], "primary_category": "adverse media",

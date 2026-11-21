@@ -35,9 +35,28 @@ _AGE_PATTERNS = [
     re.compile(r"\b(\d{1,3})\s*-?\s*yo\b", re.I),
     re.compile(r"[^\W\d_] \((\d{1,3})\)"),            # "John Smith (41) was sentenced ..."
     re.compile(r"(?:^|[.;]\s*)At (\d{1,3}),"),        # "At 52, John Smith was appointed ..."
+    re.compile(r"\bwho (?:was|were|is) (\d{1,3})\b(?! ?(?:%|percent|per cent|times|counts?|years? (?:ago|later|before|after)))", re.I),
+    re.compile(r"\b(?:turning|turned|turns) (\d{1,3})\b(?!\s*(?:%|percent|per cent))", re.I),
+    # only after a person: "Drozd was 31 at the time", "his age was 24." (not "the fine was 50.")
+    re.compile(r"(?:\b(?:he|she|they|who|age)|\b[A-Z][^\W\d_]+) (?:was|were|is) (\d{1,3})"
+               r"(?= at the time| at that time| then|\s*[,.;)]|\s*$)"),
+    re.compile(r"\bthen (?:aged )?(\d{1,3})\b(?=\s*[,.;)]|\s*$| years)", re.I),   # "Pere Punti, then 37,"
+    re.compile(r"(?:\b[A-Z][^\W\d_]+|\b(?:he|she|they)),? at (\d{1,3})(?=\s*[,;)])"),  # "Mark Phillips, at 24, was"
+    re.compile(r"[^\W\d_], (\d{1,3})(?=\.\s|\.$|\s*$)"),                          # "... included David Corral, 41."
 ]
 _AGE_WORD = re.compile(r"(?i)\b(?:aged?|years?\s+of\s+age|years?\s+old|year[-\s]old)\b")
 _BORN = re.compile(r"\bborn (?:on |in )?([^.;\n]{4,40})", re.I)
+# Read only the phrase attached to "born": "born in 1973, was designated on July 14, 2026" must give 1973,
+# never the designation date (that turned a confirmed OFAC match into a clearance under rewording).
+_BORN_STOP = re.compile(r",(?!\s*\d)|\b(?:and|was|were|is|who|which|but|when)\b", re.I)  # keeps "July 17, 1939"
+# Wordings that say "this date is a birth date" without the date right after "born":
+# "In 1952, X was born.", "X entered the world on 17 July 1939", "date of birth: 23 April 1975". Not "birthday".
+_BIRTH_CUE = re.compile(r"\b(?:born|birth ?date|date of birth|birth year|year of birth|d\.o\.b\.?|dob|"
+                        r"(?:came|come|comes|entered|enter|enters) (?:into )?(?:the|this) world)\b", re.I)
+# Any sign that the text states an age or a birth date. When it is present but nothing could be read,
+# the hit's birth date is unknown for a reason we cannot see, so it must not be replaced by a location clear.
+_DOB_SIGNAL = re.compile(r"(?i)\b(?:born|birth|aged?|years? old|year-old|years? of age|turn(?:ed|ing|s)\s+\d|"
+                         r"(?:came|entered) (?:into )?the world)\b")
 
 
 @dataclass
@@ -117,11 +136,16 @@ def extract_ages(text):
                 quotes.append(sentence)
             continue
         born = _BORN.search(sentence)
-        if born:
-            readings = N.date_readings(born.group(1))
-            if readings:
-                years.extend(readings)
-                quotes.append(sentence)
+        window = _BORN_STOP.split(born.group(1))[0] if born else ""
+        readings = N.date_readings(window) if window else []
+        if not readings and _BIRTH_CUE.search(sentence):
+            # the birth word is not directly followed by the date: take it only when the sentence holds
+            # exactly one date, so an unrelated date can never become a birth date
+            distinct = list(dict.fromkeys(ref))
+            readings = distinct if len(distinct) == 1 else []
+        if readings:
+            years.extend(readings)
+            quotes.append(sentence)
     out = []
     for year in years:
         date = year if isinstance(year, tuple) else (year, None, None)
@@ -195,6 +219,10 @@ def build_hit(room, hit, extractions=None):
                     facts.dobs, facts.dob_source, facts.dob_text = dobs, "search", quote
                     facts.dob_evidence = [s["result_id"]]
                     break
+        if not facts.dobs and not company:
+            first_para = re.split(r"\n\s*\n", notes.strip())[0] if notes.strip() else ""
+            if _DOB_SIGNAL.search(first_para):
+                facts.dob_withheld = True   # an age or birth date is stated but could not be read
     else:
         from .llm_extract import apply_hit_extractions
         apply_hit_extractions(facts, hit, room, extractions, extract_ages, search_key, N.countries_in_text)
