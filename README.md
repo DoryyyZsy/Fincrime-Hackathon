@@ -1,62 +1,309 @@
-# Right Person Screening
-
-Streamlit hackathon demo for explaining why two records do or do not describe the same person. The packaged snapshot contains a public OpenSanctions sanctions export and 5,190 synthetic customer records.
+# Same Person or Not? Track 2: sanctions screening
 
 Authors: Dory Zhu, Jennifer Liu, Yiding Wang
 
-## Run the packaged demo
+For every sanctions, PEP, enforcement or adverse-media hit raised against a customer, `system/run` decides
+whether the hit **is the customer** (`SAME_ENTITY`), **someone else** (`DIFFERENT_ENTITY`), or **needs a
+person** (`REVIEW`). It also gives a reason code, the resolved customer record, a 3–4 sentence reason, and the
+IDs of the records that decided it. It is Python 3 standard library only, deterministic, and takes about
+10 seconds on the development set.
 
-From the project directory, use Python 3.11:
+> `system/README.md` is a copy of this file, because the brief asks for a README in `system/`.
 
-```shell
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-make app PYTHON=python
+## For inspectors: test it in one command
+
+Requirements: Python 3.8 or later. Nothing to install. Put the data room's `dev/` folder at
+`data/screening/dev/` (it is git-ignored and never committed).
+
+```
+python inspector.py
 ```
 
-Open the local URL printed by Streamlit. The Overview links directly to three cases.
+This runs every check and prints PASS or FAIL for each:
 
-| Case | Expected result |
+| Step | What it checks |
 |---|---|
-| Min Shi | An identical name scores below the alert threshold because the birth dates conflict. The detail page also cites OFAC’s recorded nationality. |
-| Maslennikvo Yevhen Illich | A transliterated alias with a transposition is caught. The detail page shows the alias and matching date of birth. |
-| Grey-zone case | Reviewed UN evidence supplies nationality and confirms the listed date of birth. Both fields conflict with the synthetic customer record. |
+| 1. Environment | Python version, data files present, whether a model key is set |
+| 2. Run | `system/run` on the folder: line count and time against the 30-minute limit |
+| 3. Validate and score | the organisers' `validate.py`: format problems, practice-label score, unsafe clearances |
+| 4. Reproducibility | two runs with different `PYTHONHASHSEED` are byte-identical, and a fresh run equals the committed `output/dev.jsonl` |
+| 5. Rules of the brief | the engine imports no third-party module |
+| 6. Tests | the screening test suite (pytest if installed, otherwise the stdlib `unittest` files) |
 
-Use the live form with `Maslennikvo Yevhen Illich` and `1979-12-24` to reproduce the live match. Explainable linkage and all four pages work offline after installation. Analyst actions require a reason and append a UTC-stamped entry to `data/processed/audit_log.jsonl`.
+Expected on the dev set: **11/11 checks passed**. The validator reports 0 problems and 50/50 practice hits
+with 0 unsafe clearances; the test suite reports 95 passed.
 
-## Rebuild and evaluate
+Other commands:
 
-```shell
-make test data match alerts eval PYTHON=python
+```
+python inspector.py verify --data <folder>         # the same checks on any folder in the data-room format
+python inspector.py run <folder> <output file>     # just run the system (same as system/run)
+python inspector.py score <output file> --data <folder>
+python inspector.py explain H-D861DA               # one hit: decision, reason, and the text of each cited record
+python inspector.py check "Elvira Velasco Morillo" --dob 1968-03-05 --country Spain
+                                                   # screen a new customer in the terminal, evidence by evidence
+python inspector.py tests
+python inspector.py demo                           # the web pages, at http://127.0.0.1:8765/staff.html
 ```
 
-The packaged input is the OpenSanctions sanctions export dated 20 November 2026, artifact `20261120194704-jzr`. You can also place another `targets.simple.csv` file at `data/raw/sanctions_targets.csv`. The OpenSanctions `default` collection can include PEPs as well as sanctions. Rebuilding against a different file can change the generated cases and measured results. [Data format](https://www.opensanctions.org/docs/bulk/csv/) · [Snapshot](https://data.opensanctions.org/artifacts/sanctions/20261120194704-jzr/targets.simple.csv)
+`verify` and `run` force rules only (`SCREENING_LLM=0`) unless you add `--with-llm`. The submitted command
+itself is unchanged:
 
-| Metric | Name-only fuzzy baseline | Right Person Screening |
-|---|---:|---:|
-| Alerts | 574 | 111 |
-| True hits caught | 40 | 40 |
-| Missed true hits | 0 | 0 |
-| False positives | 534 | 71 |
-| Alert reduction | | 80.7% |
-
-An alert is a unique customer–entity pair sent to an analyst queue or marked likely hit. Dismissed pairs are retained for explanation and excluded from the alert count. The baseline uses the shared normalized names, a same-initial block, a length bound and RapidFuzz token-sort ratio ≥85. Initial blocking can omit first-letter typos. Linkage trains random-pair and EM estimates, then replaces the DOB agreement distribution with a stated assumption because same-name nonmatches dominate the training lists. The prior and DOB conflict assumption were tuned on this demo snapshot. The numbers describe the seed-42 synthetic dataset and this baseline. Independent validation and PEP performance measurement remain open.
-
-The simplified CSV mixes nationality with other country affiliations and flattens identifiers. Those values are kept for reference. Only explicit nationality and scoped IDs are scored where present. This snapshot did not exercise nationality or ID comparisons during model training. The exact scoped-ID routing override is covered by tests. Edit `config.yaml` using its JSON-compatible YAML format, then rerun `make alerts eval` to apply route thresholds. Rerun `make match` for model changes.
-
-## Optional Tavily and Grok
-
-Copy `.env.example` to `.env` and set the credentials and Grok model name. To fetch public research on listed entities, run:
-
-```shell
-make alerts eval PYTHON=python ALERT_ARGS=--research
+```
+python3 system/run <data folder> <output file>      # e.g. system/run data/screening/dev output/dev.jsonl
 ```
 
-Tavily receives only public listing properties. The bundled grey-zone example uses reviewed public evidence and works without API credentials. By design, the live form only screens records locally. Grok receives generated demo customer records only when explicitly enabled from the command line:
+## Results on the development set
 
-```shell
-make alerts eval PYTHON=python ALERT_ARGS="--research --grok-synthetic"
+| | |
+|---|---|
+| Output | 819 lines, 0 problems (`validate.py`) |
+| Practice labels | 50/50 right decisions, **0 unsafe clearances**, decision score 100, reason code 100%, customer record 100% |
+| Decisions | 466 `DIFFERENT_ENTITY` (57% cleared automatically), 135 `SAME_ENTITY`, 218 `REVIEW` |
+| Reasons | all 819 have 3 or 4 sentences |
+| Reproducibility | byte-identical across runs and hash seeds |
+| Time / cost | about 10 s with no model key, $0 |
+
+Caveat: we looked at the practice labels while building, so this score is optimistic. The unseen set is the
+real test.
+
+## Architecture
+
+```
+alerts.jsonl ──► 1. CUSTOMER SIDE  (customer.py, data.py)
+                    follow the link: account (joint holders) │ login │ email
+                    no link: search customers by name + DOB, keep records that fit the screened details
+                    merge records that are one person (same phone AND full DOB, or same document number)
+                    person facts: names, latest APPROVED identity (KYC check or note), DOB (verified beats
+                    declared), countries (records, ID document, countries named in support notes)
+                         │
+hits.jsonl ─────────┬──► 2. HIT SIDE  (hit.py)
+search_results.jsonl┘    names + aliases; DOB from `dobs`, else ages in the profile notes, else web results
+                         that describe the same kind of listing in a country tied to the hit; countries;
+                         earliest dated report; date of death
+                         ▼
+                    3. COMPARE  (compare.py, POLICY.md principles 6–8)
+                    clear only on a contradiction: type → death → too young → DOB → location → legal name
+                    confirm only on agreement: name + DOB (+ country); company: name + country
+                    otherwise REVIEW; safety net holds clears that rest on text we may have misread
+                         ▼
+                    4. OUTPUT  (pipeline.py, reasoning.py)  one JSON line per hit
 ```
 
-The Grok mode verifies that the customer file came from the synthetic generator. It sends the comparison and public findings as data to a chat completion with no search tools. The system prompt is `src/adjudication_prompt.txt`. Invalid model output and uncertain recommendations route to human review. The packaged benchmark used reviewed public evidence without live API calls.
+Every fact keeps the IDs of the records it came from (`Fact(value, sources)`), so each check knows its own
+evidence.
+
+| File | Role |
+|---|---|
+| `system/run` | entry point; one line per hit; an error on a hit becomes `REVIEW`, never a crash |
+| `screening_ml/data.py` | loads the folder, builds the joins and the person-merging union-find |
+| `screening_ml/normalize.py` | dates (6+ formats; partial dates stay partial), countries (names, codes, adjectives), names (principle 8) |
+| `screening_ml/customer.py` | customer resolution and the person picture |
+| `screening_ml/hit.py` | watchlist-side facts from fields, free text and search results |
+| `screening_ml/compare.py` | the SOP checks, the safety net, reason codes and evidence |
+| `screening_ml/reasoning.py` | the `reason` text |
+| `screening_ml/pipeline.py`, `llm_extract.py` | run order, and the optional model extractor |
+| `inspector.py` | the test command above |
+
+## How the customer is found
+
+1. **Follow the alert's link**: `account_ref` (a joint account gives several holders), `login_handle` or `email`.
+2. **No link**: take customers sharing a name part (or the screened full DOB) and keep those that fit what was
+   screened. Names may differ by nicknames, typos and variants; the DOB must be equal in every part both give;
+   the country must be the residence or nationality; the city must be in the city or address. The same filter
+   picks between joint holders.
+3. **Merge records that are one person**: same phone **and** full DOB, or the same document number on approved
+   checks. A shared phone or address alone does not merge them, because families share those.
+4. **Identity**: the most recent **approved** KYC check, or an onboarding note saying the check passed, gives
+   the legal name, DOB and document country. Rejected, expired or unclear checks are not evidence. The DOB is
+   the date next to a birth cue (`DOB`, `born`, …). A discarded note never leaves the declared DOB free to
+   clear the hit.
+5. **Several people fit**: decide for each one. If they agree, give that decision; otherwise `REVIEW`
+   `AMBIGUOUS_CUSTOMER_RECORD`. Either way `customer_record_id` is `AMBIGUOUS`. If nobody fits, compare with
+   the screened details and report `null`.
+
+## How the listed person is found
+
+- **Names**: name, best matching name, first/middle/last and every alias, compared under principle 8:
+  - case, accents, brackets and punctuation ignored; initials and placeholders dropped
+  - `name_variants.json` groups (Bob = Robert); joined forms (Abdulsalam = Abdul Salam)
+  - 1 edit allowed for parts of 4–6 letters, 2 for longer; company legal forms dropped
+  - names agree when two parts match or every part of the shorter name matches
+- **Date of birth**: the `dobs` field; else age wording in the first paragraph of the profile notes ("aged 30
+  in November 1998", "he was 24", "(41)", "At 52,"), each giving two possible years; else web results for the
+  name that describe the same kind of listing in a country tied to the hit. Most results are namesakes and fail
+  that test.
+- **Ambiguous slash dates** on a hit (`05/06/1980`) keep both readings. A clear needs every reading to
+  contradict.
+- **Countries**: countries, nationality, citizenship, the last part of each address, and the place of birth
+  ("International" and "Europe" are not countries).
+- **Time**: the earliest "According to …; Month D, YYYY:" report, and any date of death.
+
+## Safety net: never clear on evidence we may have misread
+
+A wrong clear costs 60 points; an unnecessary review costs 2–3. We measured what each evidence source
+contributes by switching it off and rebuilding every case. Without the residence notes, the system makes
+3 unsafe clears on the practice labels; without the free-text KYC notes, 2. Those are exactly the notes the
+unseen set rewords.
+
+So a clear is held for review, with the note cited and the reason saying why, when:
+- it is a **country** clear but one of the customer's notes talks about where they lived and no country could
+  be read from it;
+- it is a **legal-name** clear whose name came from a free-text note that shares nothing with the customer's
+  records, or from a note that was only partly read;
+- it is a **DOB** clear on a declared DOB while an identity note could not be fully read.
+
+Stress test: we rewrote all 3,067 residence notes in a copy of dev so that no country could be read.
+
+| | Unsafe clears on practice labels | Practice decision score | Dev hits newly cleared |
+|---|---|---|---|
+| Safety net off | 3 | 0.0 | 41 |
+| Safety net on | 0 | 97.2 | 0 |
+
+Writing these tests also found a real bug: "Cote D'Ivoire" was never recognised in free text, which had
+cleared a dev hit (H-BEDA04) whose customer lived there. It is now `REVIEW`.
+
+## How evidence and reasons are represented
+
+- **Evidence** cites only the records of the check that decided the hit: for `DOB_MISMATCH`, only the DOB's
+  source; not everything we looked at.
+- **The reason** (`reasoning.py`) always has the same three parts:
+  1. who the customer is and how the alert led there ("resolves to customer CUS-804632 through account
+     ACC-A82365 (identity verified in NOTE-8548C1)"), or that nobody fits, or that several people do;
+  2. the decisive facts, with their records;
+  3. what they mean: for a clear, that the names may agree but one contradiction is enough; for a match, that
+     nothing contradicts it; for a review, exactly what is missing.
+
+## Keeping results the same run to run
+
+The decision is pure rules: no randomness and no network unless a model key is set. Lists are sorted or kept
+in file order, and the output follows `hits.jsonl` order. Without a key, output is byte-identical across runs
+and `PYTHONHASHSEED` values (`inspector.py` step 4).
+
+## Model and prompts
+
+The rule engine always makes the decision. An **optional** extractor (`screening_ml/llm_extract.py`) reads
+free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (stdlib `urllib`).
+`SCREENING_LLM=0` turns it off.
+
+- **Model and settings**: pinned `google/gemini-2.5-flash`, temperature 0, no thinking tokens, `max_tokens`
+  2500.
+- **Prompts**: three fixed prompts:
+  - `PROMPT_NOTE`: a KYC or support note → outcome, a stated DOB, countries
+  - `PROMPT_PROFILE`: a hit profile's first paragraph → birth years, places
+  - `PROMPT_SEARCH`: a web snippet → this person or a namesake, birth years, countries
+- **Quote check**: every fact must quote the source text exactly, and a birth year must follow from its quote.
+- **Merging with the regex results**:
+  - countries are a union, which can only remove a location clear
+  - a DOB is used when the model and the regex agree, or when one of them is unknown
+  - a model-only date can clear a hit only because its quote was checked; any other new clear is refused
+- **Failures**: no key, a timeout, a bad status or invalid JSON leave the regex result standing.
+- **Cost and time**: on dev, about 2,600 texts in about 320 batched calls, roughly $0.25. A timed-out batch
+  falls back to the regex.
+
+This environment had no key, so `output/dev.jsonl` is the rules-only output.
+
+## Three cases
+
+**A clear mismatch: H-D861DA, Michael Earl Tilley (adverse media, US).** The joint account resolves to
+CUS-804632. Onfido verified DOB 1979-11-08. The hit's profile notes say he was 46 in January 2023, so he was
+born in 1976 or 1977. That contradiction is enough.
+```json
+{"decision": "DIFFERENT_ENTITY", "reason_code": "DOB_MISMATCH", "customer_record_id": "CUS-804632",
+ "reason": "The alert resolves to customer CUS-804632 through account ACC-A82365 (identity verified in NOTE-8548C1). The customer's date of birth is 1979-11-08 (NOTE-8548C1) but the hit's profile notes put its date of birth as 1976 or 1977. The names agree (Tilley, Michael Earl), but this contradiction is enough under the policy to show the hit is a different person who shares the name.",
+ "evidence": ["NOTE-8548C1"]}
+```
+
+**A match: H-582410, Elvira Velasco Morillo (PEP, Spain).** Veriff verified a Spanish passport with DOB
+1968-03-05. The hit is a Spanish MP aged 30 in November 1998, so born in 1967 or 1968. Name, DOB and country
+agree, and nothing contradicts them.
+```json
+{"decision": "SAME_ENTITY", "reason_code": "NAME_DOB_LOCATION_MATCH", "customer_record_id": "CUS-377745",
+ "reason": "The alert resolves to customer CUS-377745 through account ACC-C4CA34 (identity verified in NOTE-14E25A). The customer's date of birth 1968-03-05 (NOTE-14E25A) agrees with the hit's 1967 or 1968. Both the customer and the hit are linked to Spain. The customer's name agrees with the hit's name Elvira Velasco Morillo.",
+ "evidence": ["CUS-377745", "NOTE-14E25A"]}
+```
+
+**Left for review: H-FF3096, Abdul Rahman Yasin (sanctions, US).** The customer is Australian, but a support
+note (NOTE-10AEAB) says they lived in the US from 2013 to 2023, so the countries overlap. The hit gives no DOB,
+so nothing contradicts it and nothing confirms it.
+```json
+{"decision": "REVIEW", "reason_code": "INSUFFICIENT_DATA", "customer_record_id": "CUS-459031",
+ "reason": "The alert resolves to customer CUS-459031 through the alert's email address (identity verified in NOTE-588201). Both the customer and the hit are linked to United States. The customer's name agrees with the hit's name Abdul Rahman Yasin. Nothing in the customer's records contradicts the hit, and the date of birth cannot be compared with it, so the hit can be neither cleared nor confirmed.",
+ "evidence": ["NOTE-10AEAB"]}
+```
+
+## Demo pages
+
+```
+python inspector.py demo          # or: python -m screening_ml.demo_server; then open http://127.0.0.1:8765
+```
+
+The server is standard library only and binds to 127.0.0.1. The pages show customer data, so never expose them.
+Every page has buttons to switch between them.
+
+- **Staff check** (`/staff.html`): type a customer's details, or pick a demo customer, and press *Run check*.
+  Each matching watchlist profile appears as a card. Its evidence animates in one item at a time ("Name
+  matched", "DOB matched", "Country doesn't match", "Too young at the time", "Held for safety"), then an
+  ALERT / REVIEW / CLEAR stamp lands, then the overall verdict. *Why?* shows the full reason.
+- **Management review** (`/management.html`): headline numbers and a filterable queue of all hits. For each
+  hit it shows the trail to the customer, the customer and the hit side by side, every policy check, and the
+  cited records. **Edit hit list** lets you mark hits Cleared / Same entity / Review, remove and restore hits,
+  and export the edited list.
+- **Decision review** (`/review.html`): work queues. `SAME_ENTITY` goes to the MLRO; `REVIEW` goes to an
+  analyst; clears close automatically, with a fixed 5% QA sample. Each action needs the reviewer's name. The
+  reviewer's reason is generated from the facts, and actions are appended, timestamped, to
+  `data/screening/review/audit_log.jsonl`, which is git-ignored.
+
+`python -m screening_ml.analyst_view` writes the management page as a single offline file,
+`artifacts/analyst_view.html`, which is git-ignored.
+
+## Tests
+
+- `python inspector.py tests`: name rules, reworded residence, KYC and age sentences, the safety net, the
+  output format, extraction edge cases, and the model extractor with a fake transport (no network).
+- `tests/perturb_screening.py <folder>` rebuilds the folder four ways and scores each copy:
+  - KYC dates shifted
+  - residence verbs reworded
+  - age wording reworded
+  - KYC notes rewritten as failed
+
+  All four copies have 0 unsafe and 0 new clearances.
+
+## Experiment: a neural network (not submitted)
+
+`screening_ml/` also contains a small PyTorch network. It is a 2-layer MLP with a decision head and a
+reason-code head, using 50 features, and runs on CUDA, Apple MPS or CPU. It is **not part of the submission**:
+the brief allows only the standard library, and the network does not beat the rules.
+
+- **Why it trains on rule-engine labels**: there are only 50 gold labels, with the smallest class at 10 and
+  1 label per feature. So it learns from the rule engine's labels on all 819 hits ("silver" labels), and the
+  gold labels are held out for testing.
+- **Results**: on a leak-free split (hits sharing an alert, customer or watchlist name are kept on one side),
+  it scores 97% on silver validation and 100% on gold. On its own, though, it made 1–2 unsafe clears that
+  only the rule guard blocked.
+- **How to run it**:
+  - `pip install torch numpy pyyaml` (for CUDA, install torch with
+    `--index-url https://download.pytorch.org/whl/cu126`)
+  - `python -m screening_ml.check_data`, then `python -m screening_ml.train`, then
+    `python -m screening_ml.predict`
+  - settings are in `screening_ml/config.yaml`
+
+## Earlier prototype
+
+`app/streamlit_app.py` and `src/` are our first prototype, built before the track data was released. It is a
+Streamlit demo on a public OpenSanctions export with 5,190 synthetic customers, with fuzzy matching, Splink
+linkage and optional Tavily/Grok research. Run it with `pip install -r requirements.txt` and `make app`. It is
+not part of the Track 2 submission.
+
+## Known limits
+
+- **Ages are read with regexes.** An age with no number next to age wording is missed. The safety net turns an
+  unread residence or identity note into `REVIEW`, but a missed DOB can still lift the block on a location
+  clear when the name and DOB would have agreed.
+- **Undated KYC birth dates**: a KYC note with no birth cue ("ID dated 1952-01-21") gives no DOB.
+- **Over-counted countries**: any country named in a support note counts for the customer. That can suppress a
+  location clear, or support a company's name-and-country match.
+- **Single contradictions**: each clear rests on one contradiction. The parsers are conservative, so unknown
+  parts never count as a mismatch.
+- **Data handling**: the data is for event participants only. `data/screening/dev/`, `artifacts/` and the audit
+  log are git-ignored.
