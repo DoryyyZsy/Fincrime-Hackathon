@@ -199,9 +199,11 @@ function sync(){
 
 function filtered(){
   const q = state.q.toLowerCase();
-  return live().filter(h => (!state.d || eff(h) === state.d) && (!state.code || h.code === state.code)
+  const rows = live().filter(h => (!state.d || eff(h) === state.d) && (!state.code || h.code === state.code)
     && (!state.gold || h.gold) && (!state.held || isHeld(h)) && (!state.ov || ov[h.hit_id])
     && (!q || [h.hit_id, h.alert_id, h.record, h.screened.name, h.hit.name, ...(h.hit.names || [])].join(" ").toLowerCase().includes(q)));
+  if (state.d === "REVIEW") rows.sort((a, b) => (b.match_probability || 0) - (a.match_probability || 0) || String(a.hit_id).localeCompare(b.hit_id));
+  return rows;
 }
 
 function render(){
@@ -213,7 +215,7 @@ function render(){
       <input type="checkbox" class="pick" aria-label="Select ${esc(h.hit_id)}" data-pick="${h.hit_id}" ${picked.has(h.hit_id) ? "checked" : ""}>
       <span class="n">${esc(h.screened.name)}</span>
       <span class="badge ${isHeld(h) && !changed ? "held" : d}">${isHeld(h) && !changed ? "Held" : LABEL[d]}${o ? " ✎" : ""}</span>
-      <span class="m">${esc(h.hit.name)} · ${esc(h.hit.category || "")} · ${h.code}${h.gold ? " · ★" : ""}</span></div>`;
+      <span class="m">${esc(h.hit.name)} · ${esc(h.hit.category || "")} · ${h.code}${h.match_probability == null ? "" : ` · ${Math.round(100 * h.match_probability)}% same`}${h.review_rank ? ` · #${h.review_rank}` : ""}${h.gold ? " · ★" : ""}</span></div>`;
   }).join("");
   list.querySelectorAll(".row").forEach(el => { el.onclick = e => { if (!e.target.matches(".pick")) select(el.dataset.id); };
     el.onkeydown = e => { if (e.key === "Enter") select(el.dataset.id); }; });
@@ -262,6 +264,7 @@ function detail(h){
       <div class="verdict"><span class="badge ${isHeld(h) ? "held" : h.decision}">${LABEL[h.decision]}${isHeld(h) ? " · held by safety net" : ""}</span>
         <span class="code">${h.code}</span><span class="code">${h.hit_id} · alert ${h.alert_id} · ${h.n_hits_in_alert} hit(s) · screened ${esc(h.screened_at)}</span></div>
       <p class="reason">${esc(h.reason)}</p>
+      ${h.match_probability == null ? "" : `<p class="sub">Match score ${Math.round(1000 * h.match_probability) / 10}% same person${h.review_rank ? ` · review queue #${h.review_rank}` : ""}. The rules made the decision. This score only ranks the review queue (${Object.entries(h.match_levels || {}).map(([k, v]) => `${k}=${v}`).join(", ")}).</p>`}
       <div class="ids"><span class="sub">Customer record</span> ${h.record ? (h.record === "AMBIGUOUS" ? "<b>AMBIGUOUS</b>" : ids([h.record])) : "<i>none</i>"}
         <span class="sub" style="margin-left:10px">Evidence</span> ${ids(h.evidence) || "–"}</div>
     </div>

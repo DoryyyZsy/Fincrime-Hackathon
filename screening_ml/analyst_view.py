@@ -16,6 +16,7 @@ from .compare import CLEAR_ORDER, CONFIRM_ORDER, decide_case
 from .customer import resolve
 from .data import DataRoom
 from .hit import build_hit
+from .linkage import score_cases
 
 TEMPLATE = os.path.join(os.path.dirname(__file__), "analyst_view.html")
 CHECK_ORDER = CLEAR_ORDER + CONFIRM_ORDER + ["AMBIGUOUS_CUSTOMER_RECORD", "INSUFFICIENT_DATA"]
@@ -77,6 +78,7 @@ def build(folder):
     search = {s["result_id"]: s for s in room.search_results}
     gold = {l["hit_id"]: l for l in room.practice_labels}
     records, hits, res_cache = {}, [], {}
+    cases, raws = [], []
 
     def keep(rid):
         if rid in records or not rid:
@@ -117,6 +119,8 @@ def build(folder):
         for e in case.teacher_evidence + hf.dob_evidence:
             keep(e)
         g = gold.get(raw["hit_id"])
+        cases.append(case)
+        raws.append(raw)
         hits.append({
             "hit_id": raw["hit_id"], "alert_id": alert["alert_id"], "screened_at": alert.get("screened_at"),
             "screened": alert["customer"], "link": res.link_type, "path": _path(room, alert, res),
@@ -125,6 +129,16 @@ def build(folder):
             "hit": _hit(hf, raw), "comparisons": comps, "n_hits_in_alert": len(alert["hit_ids"]),
             "gold": {"decision": g["decision"], "codes": g["reason_codes"], "reason": g.get("reference_reason")} if g else None,
         })
+    try:
+        scores, _fit = score_cases(room, cases, raws)
+    except Exception:
+        scores = []
+    for hit, score in zip(hits, scores):
+        hit["match_probability"] = score["match_probability"]
+        hit["match_weight"] = score["match_weight"]
+        hit["review_rank"] = score["review_rank"]
+        hit["match_levels"] = score["levels"]
+        hit["field_weights"] = score["field_weights"]
     return {"hits": hits, "records": records, "folder": os.path.abspath(folder),
             "built": time.strftime("%Y-%m-%d %H:%M")}
 

@@ -136,7 +136,7 @@ function renderList() {
     const c = {};
     a.hits.forEach(h => c[h.decision] = (c[h.decision] || 0) + 1);
     return `<div class="al ${current === a.alert_id ? "sel" : ""}" data-id="${esc(a.alert_id)}">
-      <b>${esc(a.customer)}</b><small>${esc(a.alert_id)} · ${a.hits.length} hit${a.hits.length > 1 ? "s" : ""}</small>
+      <b>${esc(a.customer)}</b><small>${esc(a.alert_id)} · ${a.hits.length} hit${a.hits.length > 1 ? "s" : ""}${a.review_top != null && tab === "analyst" ? ` · up to ${Math.round(100 * a.review_top)}% same` : ""}</small>
       <div class="pills">${Object.entries(c).map(([d, k]) => `<span class="pill p-${d}">${k} ${VERDICT[d]}</span>`).join("")}</div></div>`;
   }).join("") : `<div class="empty">Nothing here.</div>`;
   document.querySelectorAll(".al").forEach(el => el.onclick = () => openAlert(el.dataset.id));
@@ -160,8 +160,10 @@ function hitCard(d) {
   return `<div class="hit" id="h-${esc(d.hit_id)}">
     <div class="hit-top"><span class="verdict v-${esc(d.decision)}">${VERDICT[d.decision]}</span>
       <span class="listed">${esc(h.name || d.listed)}</span><span class="cat">${esc(h.category || "")}</span>
+      ${d.match_probability == null ? "" : `<span class="cat">P(same) ${Math.round(100 * d.match_probability)}%${d.review_rank ? " · queue #" + d.review_rank : ""}</span>`}
       <span class="state">${esc(STATE[d.queue] || d.queue)}${d.status && d.status !== "New" ? " · " + esc(d.status) : ""}</span></div>
     <div class="summary">${esc(d.summary)}</div>
+    ${d.match_probability == null ? "" : `<div class="summary">Match score ${Math.round(1000 * d.match_probability) / 10}% chance this is the same person${d.review_rank ? " (review queue #" + d.review_rank + ")" : ""}. The rules still decide; the score only orders the queue.</div>`}
     <table><tr><th></th><th>Customer</th><th>Listed person</th><th></th></tr>
       ${(d.facts || []).map(f => `<tr><td class="f">${esc(f.fact)}</td><td>${esc(f.customer)}</td><td>${esc(f.listed)}</td>
         <td class="vd vd-${esc(f.verdict)}">${VD[f.verdict] || ""}</td></tr>`).join("")}</table>
