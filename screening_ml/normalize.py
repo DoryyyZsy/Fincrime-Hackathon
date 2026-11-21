@@ -1,4 +1,5 @@
 """Normalisers for the messy parts of the data: dates, countries and names (POLICY.md principle 8)."""
+import calendar
 import json
 import re
 import unicodedata
@@ -38,8 +39,43 @@ def _valid(y, m, d):
     return y is not None and 1800 <= y <= 2100 and (m is None or 1 <= m <= 12) and (d is None or 1 <= d <= 31)
 
 
+def is_real_date(year, month, day):
+    """True when the triple is a real calendar day. Unknown month or day is allowed."""
+    if not _valid(year, month, day) or month is None or day is None:
+        return _valid(year, month, day)
+    return 1 <= day <= calendar.monthrange(year, month)[1]
+
+
+def _calendar_ok(y, m, d):
+    return is_real_date(y, m, d)
+
+
+_SLASH = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
+
+
+def slash_readings(first, second, year):
+    """Calendar-valid readings of a numeric slash date.
+
+    Day-first and month-first are both returned when each is a real day and they
+    differ. A single component above 12 leaves only one reading. Neither reading
+    valid (31/02, 02/31) returns nothing: unknown stays unknown.
+    """
+    readings = []
+    if _calendar_ok(year, second, first):  # day / month / year
+        readings.append((year, second, first))
+    if first != second and _calendar_ok(year, first, second):  # month / day / year
+        readings.append((year, first, second))
+    return readings
+
+
 def parse_date(text):
-    """Parse one date string into (year, month, day); missing parts stay None. Returns None if no date."""
+    """Parse one date string into (year, month, day); missing parts stay None. Returns None if no date.
+
+    Numeric slash dates in structured bank fields are day-first. Every unambiguous
+    slash date on customer records and KYC checks in the development set has the
+    day first (the first number exceeds 12 thousands of times; the second never
+    does). Hit profiles are not written that way: use `date_readings` there.
+    """
     if text is None:
         return None
     text = str(text).strip()
@@ -52,18 +88,77 @@ def parse_date(text):
     return None
 
 
-def find_dates(text):
-    """All dates in a free-text string, most specific patterns first, without overlaps."""
+def date_readings(text):
+    """Every defensible reading of one date expression.
+
+    An ambiguous `a/b/year` (both readings real calendar days, a != b) contributes
+    both readings so a caller can require every reading to contradict before
+    clearing, and can treat one agreeing reading as enough to refuse a clearance.
+    A slash date with only one calendar-valid reading (6/20/1955, 20/06/1955)
+    contributes that reading. A slash date with no real reading (31/02/1980)
+    contributes nothing. Any other expression falls through to `parse_date`.
+    """
+    if text is None:
+        return []
+    text = str(text).strip()
+    if not text:
+        return []
+    sm = _SLASH.search(text)
+    if sm:
+        readings = slash_readings(int(sm.group(1)), int(sm.group(2)), int(sm.group(3)))
+        return readings
+    one = parse_date(text)
+    return [one] if one else []
+
+
+def date_spans(text):
+    """(date, start, end, raw) in left-to-right order. More specific patterns win overlaps.
+
+    Slash dates keep the historical day-first reading so existing callers of
+    `find_dates` do not change. Use `date_readings` where a hard day-first value
+    would be unsafe.
+    """
     found, taken = [], []
     for pattern, pick in _DATE_PATTERNS:
-        for m in pattern.finditer(text or ""):
-            if any(m.start() < e and s < m.end() for s, e in taken):
+        for match in pattern.finditer(text or ""):
+            if any(match.start() < end and start < match.end() for start, end in taken):
                 continue
-            y, mo, d = (_to_int(p) for p in pick(m))
-            if _valid(y, mo, d):
-                found.append(((y, mo, d), m.start()))
-                taken.append((m.start(), m.end()))
-    return [date for date, _ in sorted(found, key=lambda x: x[1])]
+            year, month, day = (_to_int(part) for part in pick(match))
+            if _valid(year, month, day):
+                found.append(((year, month, day), match.start(), match.end(), text[match.start():match.end()]))
+                taken.append((match.start(), match.end()))
+    found.sort(key=lambda item: item[1])
+    return found
+
+
+def find_dates(text, flexible_slash=False):
+    """All dates in a free-text string, most specific patterns first, without overlaps.
+
+    `flexible_slash` is for hit prose, where 6/20/1955 is June and 05/06/1955 could
+    be either day. An ambiguous slash date is returned as a year only, so the month
+    and day are not a hard value. The reference year of an age sentence is unchanged
+    either way.
+    """
+    if not flexible_slash:
+        return [date for date, _, _, _ in date_spans(text)]
+    found, taken = [], []
+    for pattern, pick in _DATE_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            if any(match.start() < end and start < match.end() for start, end in taken):
+                continue
+            if pattern.pattern.startswith(r"\b(\d{1,2})/"):
+                readings = slash_readings(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                if not readings:
+                    continue
+                date = readings[0] if len(readings) == 1 else (readings[0][0], None, None)
+            else:
+                year, month, day = (_to_int(part) for part in pick(match))
+                if not _valid(year, month, day):
+                    continue
+                date = (year, month, day)
+            found.append((date, match.start()))
+            taken.append((match.start(), match.end()))
+    return [date for date, _ in sorted(found, key=lambda item: item[1])]
 
 
 def date_key(date):

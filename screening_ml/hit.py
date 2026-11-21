@@ -18,17 +18,24 @@ LISTING_PHRASES = {
 DEFAULT_PHRASE = "named on a watchlist"
 DATED_REPORT = re.compile(r"According to [^;\n]+;\s*([A-Z][a-z]+ \d{1,2}, \d{4}):")
 
+# The first patterns are the development-set wordings. The rest cover the same fact
+# said differently ("age 46", "46 years of age", "30 year old", "at age 25 when").
+# A number counts only beside an age word or in one of these frames, so "28 years
+# in prison" and a fine of 1,500 do not become a birth year.
 _AGE_PATTERNS = [
-    re.compile(r"\baged? (\d{1,3})\b"),
-    re.compile(r"\b(\d{1,3})-year-old\b"),
-    re.compile(r"\b(\d{1,3}) years? old\b"),
-    re.compile(r"\bage of (\d{1,3})\b"),
-    re.compile(r"\b(?:he|she|they) (?:was|were|is) (\d{1,3})\b", re.I),
-    re.compile(r"\bat which point (?:he|she|they) (?:was|were) (\d{1,3})\b", re.I),
-    re.compile(r"\bwas (\d{1,3}) when\b"),
-    re.compile(r"[^\W\d_], (\d{1,3}),"),       # "Elena Johansson, 51, ..." (any letter, incl. accents)
+    re.compile(r"\baged?\s+(\d{1,3})\b", re.I),
+    re.compile(r"\b(\d{1,3})\s*-?\s*years?\s*-?\s*old\b", re.I),
+    re.compile(r"\b(\d{1,3})\s+years?\s+of\s+age\b", re.I),
+    re.compile(r"\bage\s+of\s+(\d{1,3})\b", re.I),
+    re.compile(r"\b(?:he|she|they)\s+(?:was|were|is)\s+(?:age\s+)?(\d{1,3})\b", re.I),
+    re.compile(r"\bat\s+which\s+point\s+(?:he|she|they)\s+(?:was|were)\s+(?:age\s+)?(\d{1,3})\b", re.I),
+    re.compile(r"\bwas\s+(?:age\s+)?(\d{1,3})\s+when\b", re.I),
+    re.compile(r"\bat\s+age\s+(\d{1,3})\b", re.I),
+    re.compile(r"[^\W\d_],\s*(?:age\s+)?(\d{1,3}),"),  # "Elena Johansson, 51, ..." or ", age 51,"
+    re.compile(r"\b(\d{1,3})\s*-?\s*yo\b", re.I),
 ]
-_BORN = re.compile(r"\bborn (?:on |in )?([^.;\n]{4,30})", re.I)
+_AGE_WORD = re.compile(r"(?i)\b(?:aged?|years?\s+of\s+age|years?\s+old|year[-\s]old)\b")
+_BORN = re.compile(r"\bborn (?:on |in )?([^.;\n]{4,40})", re.I)
 
 
 @dataclass
@@ -52,35 +59,65 @@ def _sentences(text):
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
 
 
+def _age_number(sentence):
+    """The age stated in one sentence, or None when no age wording is present."""
+    for pattern in _AGE_PATTERNS:
+        match = pattern.search(sentence)
+        if not match:
+            continue
+        # A pattern may have the number in a later group ("he was age 24").
+        raw = next(group for group in match.groups() if group)
+        age = int(raw)
+        if 0 < age < 110:
+            return age
+    for word in _AGE_WORD.finditer(sentence):
+        start = max(0, word.start() - 16)
+        window = sentence[start: word.end() + 16]
+        best = None
+        for number in re.finditer(r"\b(\d{1,3})\b", window):
+            raw = number.group(1)
+            if len(raw) > 1 and raw.startswith("0"):  # 004 from a register number, not an age
+                continue
+            age = int(raw)
+            if not 0 < age < 110:
+                continue
+            distance = abs((start + number.start()) - word.start())
+            if best is None or distance < best[0]:
+                best = (distance, age)
+        if best:
+            return best[1]
+    return None
+
+
 def extract_ages(text):
-    """Birth-year candidates from 'aged 45 in March 2019' style sentences: two years per age."""
+    """Birth-year candidates from 'aged 45 in March 2019' style sentences: two years per age.
+
+    Slash dates in the sentence are not assumed day-first: 6/20/2019 is 20 June, and
+    an ambiguous 05/06/2019 still yields 2019 as the reference year. A 'born on'
+    slash date contributes every calendar-valid reading instead of one hard value.
+    """
     years, quotes = [], []
     for sentence in _sentences(text):
-        ref = [d for d in N.find_dates(sentence)]
+        ref = N.find_dates(sentence, flexible_slash=True)
         if not ref:
             continue
-        for pattern in _AGE_PATTERNS:
-            m = pattern.search(sentence)
-            if not m:
-                continue
-            age = int(m.group(1))
+        age = _age_number(sentence)
+        if age is not None:
             ref_year = ref[0][0]
-            if 0 < age < 110:
-                years += [ref_year - age - 1, ref_year - age]
+            years += [ref_year - age - 1, ref_year - age]
+            quotes.append(sentence)
+            continue
+        born = _BORN.search(sentence)
+        if born:
+            readings = N.date_readings(born.group(1))
+            if readings:
+                years.extend(readings)
                 quotes.append(sentence)
-                break
-        else:
-            m = _BORN.search(sentence)
-            if m:
-                d = N.parse_date(m.group(1))
-                if d:
-                    years.append(d)
-                    quotes.append(sentence)
     out = []
-    for y in years:
-        d = y if isinstance(y, tuple) else (y, None, None)
-        if d not in out:
-            out.append(d)
+    for year in years:
+        date = year if isinstance(year, tuple) else (year, None, None)
+        if date not in out:
+            out.append(date)
     return out, " ".join(quotes)
 
 
@@ -120,11 +157,13 @@ def build_hit(room, hit):
     facts.phrase = LISTING_PHRASES.get(facts.category.lower(), DEFAULT_PHRASE)
     facts.countries = hit_countries(hit)
 
-    # date of birth: dobs field -> first paragraph of the profile notes -> web search results
+    # date of birth: dobs field -> first paragraph of the profile notes -> web search results.
+    # An ambiguous slash date is both readings, so a clearance needs every reading
+    # to contradict and one agreeing reading is enough to stop it.
     for value in hit.get("dobs") or []:
-        d = N.parse_date(value)
-        if d and d not in facts.dobs:
-            facts.dobs.append(d)
+        for date in N.date_readings(value):
+            if date not in facts.dobs:
+                facts.dobs.append(date)
     if facts.dobs:
         facts.dob_source, facts.dob_evidence = "field", [f"{hit['hit_id']}#dobs"]
     notes = hit.get("profile_notes") or ""
@@ -152,5 +191,9 @@ def build_hit(room, hit):
     if reports:
         facts.earliest_report = min(reports, key=N.date_key)
     if hit.get("deceased_date"):
-        facts.deceased = N.parse_date(hit["deceased_date"])
+        readings = N.date_readings(hit["deceased_date"])
+        if readings:
+            # Death is before screening only if every reading is. The latest
+            # reading is the one `_before` has to clear.
+            facts.deceased = max(readings, key=N.date_key)
     return facts

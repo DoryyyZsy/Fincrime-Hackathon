@@ -25,8 +25,9 @@ alerts.jsonl ─────────┤                                     
           AND full DOB, or the same document number on approved KYC checks        │
                       ▼                                                           │
           person facts: names, latest APPROVED identity (KYC check or KYC note),  │
-          DOB (verified beats declared), countries (records, ID document,         │
-          residence notes) — each fact keeps the record IDs it came from          │
+          DOB beside a birth cue (verified beats declared), countries (records,   │
+          ID document, any country a support note names) — each fact keeps the    │
+          record IDs it came from                                                  │
                       │                                                           │
 hits.jsonl ───────────┼──► 2. HIT SIDE  (screening_ml/hit.py)                     │
 search_results.jsonl ─┘    names + aliases; DOB from `dobs` → age sentences in    │
@@ -64,9 +65,17 @@ search_results.jsonl ─┘    names + aliases; DOB from `dobs` → age sentence
    between joint holders.
 3. Merge records that are one person: same phone **and** same full DOB, or the same document number on approved
    checks, transitively. A shared phone or address alone does not merge (families share them).
-4. Identity: the most recent **approved** KYC check, or onboarding note recording one, gives the legal name,
-   DOB and document country. Rejected and expired checks are ignored. Countries come from every record's
-   residence and nationality, the ID document, and notes about where the customer lived or worked.
+4. Identity: the most recent **approved** KYC check, or an onboarding note that says the check passed, gives
+   the legal name, DOB and document country. A note is not evidence when it says the check failed
+   (`rejected`, `did not pass`, `not verified`, `resubmit`, `pending`, …) or never says that it passed.
+   The DOB is the date next to a birth cue (`DOB`, `born`, `date of birth`), or a date that is the whole
+   parenthesis after the name — not "the first full date that is not `created_at`". A date after the
+   screening date, or an age outside 0–110, is ignored; two birth dates that disagree become unknown.
+   When a note is discarded, the declared record DOB is not used to clear the hit, and a country mismatch
+   is not a clearance either: the document country on that note is unknown. Countries come from every
+   record's residence and nationality, the ID document, and every country named in a non-KYC note. A
+   keyword list (`lived`, `work`, …) is not required, because a reworded sentence (`stayed`, `job`) would
+   otherwise drop the country and clear the hit.
 5. More than one person fits: decide for each; same outcome → that outcome, otherwise `REVIEW`
    `AMBIGUOUS_CUSTOMER_RECORD`; `customer_record_id` is `AMBIGUOUS` either way. No fit → compare with the screened
    details and report `null`.
@@ -78,9 +87,14 @@ search_results.jsonl ─┘    names + aliases; DOB from `dobs` → age sentence
   groups; joined forms (Abdulsalam = Abdul Salam); 1 edit for 4-6 letters, 2 for longer; company legal forms
   dropped; agreement = two parts match or every part of the shorter name.
 - **Date of birth**: the `dobs` field; else the first paragraph of the profile notes ("aged 30 in November
-  1998", "he was 24", "reached the age of 38": two possible years each); else web results for the name that
-  describe the same kind of listing ("a politically exposed person", …) in a country tied to the hit. Most
-  results are namesakes and are rejected by that test.
+  1998", "age 30", "30 year old", "30 years of age", "he was 24", "at age 25 when": two possible years
+  each); else web results for the name that describe the same kind of listing ("a politically exposed
+  person", …) in a country tied to the hit. Most results are namesakes and are rejected by that test.
+  A number counts only next to age wording, so a sentence of "28 years" or a fine does not become a birth year.
+- **Slash dates on the hit**: `6/20/1955` is 20 June, because the other reading is not a day. `05/06/1980`
+  is both 5 June and 6 May. A clearance needs every reading to contradict, and one reading that agrees
+  is enough to stop it. Customer records and KYC fields stay day-first: every unambiguous slash date in
+  those fields has the day first.
 - **Countries**: countries, nationality, citizenship, the last part of each address and the place of birth
   ("International" and "Europe" are not countries).
 - **Time**: the earliest "According to …; Month D, YYYY:" report and any date of death.
@@ -97,8 +111,8 @@ when the answer is `REVIEW`.
 ## Keeping results the same run to run
 
 The system is pure rules: no randomness, no model calls, no network. Candidate lists, country lists and
-evidence are sorted or kept in file order, and the output is written in `hits.jsonl` order. The dev output is
-byte-identical across runs and across different `PYTHONHASHSEED` values.
+evidence are sorted or kept in file order, and the output is written in `hits.jsonl` order. Two runs of the
+dev set with `PYTHONHASHSEED=0` and `PYTHONHASHSEED=1` were byte-identical.
 
 ## Model and prompts
 
@@ -108,20 +122,22 @@ run-to-run variation (10% of the score is reproducibility). The free-text extrac
 wordings the regexes miss.
 
 We also built a small neural network on top of these features (`screening_ml/`, PyTorch) as an experiment.
-It is not part of this system because the rules allow only the standard library, and on dev it does not beat
-the rules (see `screening_ml/README.md`).
+It is not part of this system. `system/run` imports only the stdlib rule modules (`data`, `normalize`,
+`customer`, `hit`, `compare`). The network's `rule_guard` can only turn a rule clearance into `REVIEW`, it
+is seed-unstable, and it needs PyTorch, so the submitted path is the rule engine (see `screening_ml/README.md`).
 
 ## Time and cost
 
-About 10 seconds for the dev set (440 alerts, 819 hits, 72k customers) on a laptop, most of it loading the
-files. No API calls, so cost is $0.
+About 4 seconds for the dev set (440 alerts, 819 hits, 72k customers) in this environment, most of it loading
+the files. No API calls, so cost is $0.
 
 ## Results on the development set
 
 `validate.py --score practice_labels.jsonl`: 819 lines, 0 problems; practice hits 50/50 right decisions,
 0 unsafe clearances, decision score 100, reason code 100%, customer record 100%. Dev decisions: 463
-`DIFFERENT_ENTITY`, 134 `SAME_ENTITY`, 222 `REVIEW`. Caveat: we looked at the practice labels while building,
-so this score is optimistic; the unseen set is the real test.
+`DIFFERENT_ENTITY`, 134 `SAME_ENTITY`, 222 `REVIEW`. One of those clearances, H-3DB30F, is `DOB_MISMATCH`
+rather than `LOCATION_MISMATCH`: the profile says he "reached 37 years of age" in November 1981.
+Caveat: we looked at the practice labels while building, so this score is optimistic; the unseen set is the real test.
 
 ## Three cases
 
@@ -155,9 +171,30 @@ no date of birth, so nothing contradicts it and nothing confirms it.
  "evidence": ["NOTE-10AEAB"]}
 ```
 
+## Checks
+
+`tests/test_screening_extract.py` is stdlib `unittest` (slash dates, KYC cues, rejection phrases, age paraphrases).
+`tests/perturb_screening.py <data folder>` rebuilds the folder four ways and scores each with `validate.py`:
+KYC-note `created_at` shifted by two days, residence verbs paraphrased (`stayed`, `job`, …), age wording
+paraphrased, and KYC notes rewritten as "not verified / did not pass / resubmit" with the birth year moved.
+On the dev folder the four perturbed runs have 0 unsafe clearances and 0 decisions that flip to
+`DIFFERENT_ENTITY`. The rejected-note run reviews more hits (practice score 67.6) because those notes were
+real passes and dropping them removes DOB and document-country evidence.
+
 ## Known limits
 
-- The unseen set rewords free text; ages, KYC notes and residence notes are read with regexes and new
-  phrasings can be missed. A miss usually means less evidence, which leads to `REVIEW` rather than a wrong clear.
-- Clears rest on one contradiction each. A wrongly parsed country or date could clear a real match; the
-  country and date parsers are therefore conservative (unknown parts never count as a mismatch).
+- Ages are still regexes. A sentence that states an age without putting a number next to "age", "year old"
+  or "born" is missed. Missing a DOB removes the rule that blocks a location clearance when name and DOB
+  agree, so a badly paraphrased age can still clear a hit the DOB would have saved. The paraphrases in
+  `tests/perturb_screening.py` do not.
+- A KYC note that gives a date with no birth cue ("national ID dated 1952-01-21") does not yield a DOB.
+  Seven development-set notes are in that shape. The declared record DOB is used instead.
+- Slash dates on customer records and KYC notes are day-first, because every unambiguous slash date in those
+  fields is day-first and the screened date agrees. A hit profile is not written that way; an ambiguous hit
+  date keeps both readings. A customer file that switched to month-first would be misread.
+- Any country named in a support note is tied to the customer. A note about a transfer destination can add
+  a country and suppress a location clearance. That is the safe direction. For a company, the same extra
+  country can support a name-and-country match.
+- A KYC note we cannot read as a pass is dropped entirely. If that note was the real identity check, the hit
+  goes to review instead of being confirmed, and it is not cleared from the declared DOB or from the countries
+  that remain. A genuinely failed note plus a true country mismatch is therefore reviewed, not cleared.

@@ -150,7 +150,10 @@ def compare(person, hit, screened_at):
     overlap = cust_countries & hit.countries
     if cust_countries and hit.countries and not overlap:
         srcs = sorted({s for c in cust_countries for s in person.countries[c]})
-        if not (name_agree and dob_agree):  # name + dob agreeing turns a country difference into REVIEW
+        # Name + DOB agreeing turns a country difference into REVIEW. So does an
+        # identity note we could not read: its document country is unknown, and a
+        # clearance would treat that unknown as a contradiction.
+        if not (name_agree and dob_agree) and not getattr(person, "identity_unreadable", False):
             checks["LOCATION_MISMATCH"] = Check(True, srcs,
                                                 f"The customer is linked only to {', '.join(sorted(cust_countries))} but the hit is linked only to {', '.join(sorted(hit.countries))}.")
 

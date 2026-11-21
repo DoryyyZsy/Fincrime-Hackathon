@@ -4,8 +4,34 @@ from dataclasses import dataclass, field
 
 from . import normalize as N
 
-RESIDENCE_WORDS = re.compile(r"(?i)resid|lived|living|based|employ|work|moved|relocat|located|home")
-NEGATIVE_KYC = re.compile(r"(?i)reject|fail|expired|declin|could not|unable|did not match|mismatch|denied|unsuccess")
+# A KYC note is evidence only when it says the check passed and does not say it failed.
+# "not verified", "did not pass", "resubmit" and the like are rejections even though
+# none of the development-set notes use them. Unsure stays unused (principle 4).
+_POSITIVE_KYC = re.compile(
+    r"(?i)\b(?:verif\w*|approv\w*|confirm\w*|cleared|clears|pass(?:ed|es|ing)?|"
+    r"success\w*|validat\w*|complet\w*|match(?:es|ed|ing)?|accept(?:ed|s|ance)?)\b"
+)
+_NEGATIVE_KYC = re.compile(
+    r"(?i)(?:"
+    r"\breject|\bfail(?:ed|ure|s)?|\bexpired|\bdeclin|"
+    r"\bcould not|\bcouldn'?t|\bunable|"
+    r"\bdid not match|\bdidn'?t match|\bmismatch|\bdenied|"
+    r"\bunsuccess|\bnot verified|\bnot approved|\bnot confirmed|\bnot validated|\bnot cleared|"
+    r"\bnot completed|\bdid not pass|\bdidn'?t pass|\bnot pass|"
+    r"\bdid not (?:clear|verify|complete|succeed)|"
+    r"\bresubmit|\bincomplete|\bpending|\binconclusive|"
+    r"\bwithdrawn|\bcancell?ed"
+    r")"
+)
+# Birth cues. The date beside the cue is the DOB; the first other full date in the
+# note is not, because that other date is usually the day the check was run.
+_DOB_CUE = re.compile(
+    r"(?i)\b(?:date of birth|birth\s*date|birthdate|birthday|d\.?\s*o\.?\s*b\.?|born|birth)\b"
+)
+_CUE_WINDOW = 40
+_MAX_PERSON_AGE = 110
+# "verified on 2024-07-12" is the check, not a birth date. "born on 6 May 1972" is.
+_CHECK_ON = re.compile(r"(?i)(?:\bon|\bas of)\s*$")
 
 
 @dataclass
@@ -27,6 +53,9 @@ class Person:
     countries: dict = field(default_factory=dict)   # country -> [source ids]
     n_approved_checks: int = 0
     n_rejected_checks: int = 0
+    # A KYC note was present but could not be read as a passed check. Its document
+    # country and DOB are unknown, not known to contradict the hit.
+    identity_unreadable: bool = False
 
 
 @dataclass
@@ -96,18 +125,122 @@ def resolve(room, alert):
         if root in seen:
             continue
         seen.add(root)
-        persons.append(build_person(room, cid))
+        persons.append(build_person(room, cid, alert.get("screened_at")))
     return Resolution(link, candidates, persons, screened)
 
 
-def _kyc_note_identity(note):
+def kyc_note_failed(text):
+    """True when a KYC note says the check did not pass, or never says that it did."""
+    if not text:
+        return True
+    if _NEGATIVE_KYC.search(text):
+        return True
+    return _POSITIVE_KYC.search(text) is None
+
+
+def _plausible_person_dob(dob, *refs):
+    """A person's birth date: a real day, not after a known reference, age 0-110 there."""
+    if not dob or dob[0] is None:
+        return False
+    year, month, day = dob
+    if month and day and not N.is_real_date(year, month, day):
+        return False
+    for ref in refs:
+        if not ref or ref[0] is None:
+            continue
+        earliest = (year, month or 1, day or 1)
+        latest_ref = (ref[0], ref[1] or 12, ref[2] or 31)
+        if earliest > latest_ref:
+            return False
+        if ref[0] - year > _MAX_PERSON_AGE or ref[0] - year < 0:
+            return False
+    return True
+
+
+def _merge_dates(dates):
+    """Combine dates that do not disagree. Conflicting parts → None (unknown)."""
+    merged = dates[0]
+    for other in dates[1:]:
+        if any(left is not None and right is not None and left != right for left, right in zip(merged, other)):
+            return None
+        merged = tuple(left if left is not None else right for left, right in zip(merged, other))
+    return merged
+
+
+def _is_check_run_date(text, start):
+    """A date introduced by 'on' or 'as of' is when the check ran, unless a birth word leads into it.
+
+    'verified on 2024-07-12' is the check. 'born in France on 14 February 1953' is the DOB.
+    """
+    pre = text[max(0, start - 48):start]
+    found = _CHECK_ON.search(pre)
+    if not found:
+        return False
+    return re.search(r"(?i)\b(?:born|birth|d\.?\s*o\.?\s*b\.?)\b", pre[:found.start()]) is None
+
+
+def _dob_from_kyc_text(text, created, screened_at):
+    """DOB stated next to a birth cue, or a date that is the whole parenthesis.
+
+    The day the check was written is not a birth date, and shifting `created_at`
+    must not make it one. Two birth dates that disagree → unknown.
+
+    Slash dates in these notes stay day-first. Every unambiguous slash date in the
+    bank's customer records, KYC checks and KYC notes has the day first (the first
+    number is above 12 thousands of times and the second number never is), and the
+    screened date agrees with that reading. Hit profiles do not: those use
+    `date_readings`.
+    """
+    text = text or ""
+    # Partial dates count: "DOB 1999" is a year, and the full date later in the
+    # sentence is the day the check ran. Requiring a full date made that day the DOB.
+    spans = [span for span in N.date_spans(text) if not _is_check_run_date(text, span[1])]
+    candidates = []
+    for cue in _DOB_CUE.finditer(text):
+        nearest = None
+        for date, start, end, raw in spans:
+            if end <= cue.start():
+                gap = cue.start() - end
+            elif cue.end() <= start:
+                gap = start - cue.end()
+            else:
+                gap = 0
+            if gap > _CUE_WINDOW:
+                continue
+            if nearest is None or gap < nearest[0]:
+                nearest = (gap, date, raw)
+        if nearest is None:
+            continue
+        candidates.append(nearest[1])
+    for match in re.finditer(r"\(([^()]{4,48})\)", text or ""):
+        inner = [span for span in N.date_spans(match.group(1)) if all(span[0])]
+        if len(inner) != 1:
+            continue
+        raw = inner[0][3]
+        leftover = match.group(1).replace(raw, "")
+        leftover = re.sub(r"[\s,./\-]+", "", leftover)
+        if leftover:
+            continue
+        candidates.append(inner[0][0])
+    plausible, seen = [], set()
+    for date in candidates:
+        if date in seen or not _plausible_person_dob(date, created, screened_at):
+            continue
+        seen.add(date)
+        plausible.append(date)
+    if not plausible:
+        return None
+    return _merge_dates(plausible)
+
+
+def _kyc_note_identity(note, screened_at=None):
     """Pull verified name / dob / document country out of a free-text onboarding note."""
-    text = note["text"]
-    if NEGATIVE_KYC.search(text):
+    text = note.get("text") or ""
+    if kyc_note_failed(text):
         return None
     created = N.parse_date(note.get("created_at"))
-    dates = [d for d in N.find_dates(text) if d != created and all(d)]
-    dob = dates[0] if dates else None
+    screened = N.parse_date(screened_at) if not isinstance(screened_at, tuple) else screened_at
+    dob = _dob_from_kyc_text(text, created, screened)
     caps = re.findall(r"\b[A-Z][A-Z'\-]+(?:\s+[A-Z][A-Z'\-]+)+\b", text)
     caps = [c for c in caps if not re.fullmatch(r"(?:DOB|ID|KYC|USA|UK)(?:\s.*)?", c)]
     name = max(caps, key=len) if caps else None
@@ -115,7 +248,7 @@ def _kyc_note_identity(note):
     return {"name": name, "dob": dob, "countries": countries, "date": created}
 
 
-def build_person(room, cid):
+def build_person(room, cid, screened_at=None):
     root = room.person_of.get(cid, cid)
     records = sorted(room.records_of_person.get(root, [cid]))
     primary = room.customer_by_id[cid]
@@ -124,6 +257,10 @@ def build_person(room, cid):
 
     verified = []   # (date, name, dob, countries, source)
     record_dobs = []
+    # A KYC note we could not treat as a passed check. Its facts are not evidence,
+    # and the declared record DOB must not clear the hit in its place: that DOB is
+    # often a typo the check was meant to replace (principle 4).
+    discarded_kyc_note = False
     for rid in records:
         c = room.customer_by_id[rid]
         for f in ("full_name", "preferred_name", "login_name"):
@@ -152,13 +289,19 @@ def build_person(room, cid):
 
         for note in room.notes_by_email.get((c.get("email") or "").lower(), []):
             if note.get("channel") == "kyc":
-                ident = _kyc_note_identity(note)
+                ident = _kyc_note_identity(note, screened_at)
                 if ident:
-                    for country in ident["countries"]:
+                    for country in sorted(ident["countries"]):
                         person.countries.setdefault(country, []).append(note["note_id"])
                     verified.append((ident["date"], ident["name"], ident["dob"], note["note_id"]))
-            elif RESIDENCE_WORDS.search(note["text"]):
-                for country in N.countries_in_text(note["text"]):
+                else:
+                    discarded_kyc_note = True
+            else:
+                # Any country a support note names is tied to the customer. Gating on
+                # "lived" / "work" drops the country when the sentence is reworded
+                # ("stayed", "job"), and the missing country becomes a LOCATION_MISMATCH
+                # clearance. An extra country can only remove that clearance.
+                for country in sorted(N.countries_in_text(note.get("text") or "")):
                     person.countries.setdefault(country, []).append(note["note_id"])
 
     if verified:  # principle 4: the most recent approved identity check wins
@@ -168,9 +311,10 @@ def build_person(room, cid):
             person.verified_name = Fact(N.name_parts(name, company), [source])
         if dob:
             person.dob, person.dob_verified = Fact(dob, [source]), True
-    if person.dob is None and record_dobs:
+    if person.dob is None and record_dobs and not discarded_kyc_note:
         own = [f for f in record_dobs if f.sources[0] == cid]
         person.dob = (own or record_dobs)[0]
+    person.identity_unreadable = discarded_kyc_note
     return person
 
 
