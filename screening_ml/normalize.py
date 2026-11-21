@@ -239,7 +239,10 @@ def name_parts(name, company=False):
     text = re.sub(r"[^a-z0-9 ]+", " ", text.replace("'", "").replace(".", ""))
     parts, seen = [], set()
     for part in text.split():
-        if len(part) < 2 or part.isdigit() or part in PLACEHOLDERS or any(c.isdigit() for c in part):
+        if len(part) < 2 or part.isdigit() or part in PLACEHOLDERS:
+            continue
+        # letters+digits: noise in a person's name, but a real part of a company name ("N26 Bank", "3M")
+        if not company and any(c.isdigit() for c in part):
             continue
         if company and part in LEGAL_FORMS:
             continue
