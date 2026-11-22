@@ -132,41 +132,56 @@ class Model(unittest.TestCase):
         self.assertGreaterEqual(model.iterations, 1)
         self.assertLess(model.iterations, 15, f"separated mixture took {model.iterations} iterations")
         self.assertTrue(L.anchors_hold(model))
+        self.assertTrue(L.weights_are_ordered(model))
+        self.assertLessEqual(model.lambda_, L.LAMBDA_MAX)
 
-    def test_em_converges_when_a_level_points_the_wrong_way(self):
-        """A spread of patterns makes within_1 (and sometimes the name) more common among non-matches.
+    def test_starting_weights_are_ordered(self):
+        model = L.initial_fit()
+        self.assertTrue(L.weights_are_ordered(model))
+        self.assertGreater(L.level_weight(model, "dob", "full"), L.level_weight(model, "dob", "missing"))
+        self.assertGreater(L.level_weight(model, "dob", "missing"), L.level_weight(model, "dob", "conflict"))
+        self.assertLessEqual(L.level_weight(model, "name", "missing"), 0.0)
 
-        Resetting that whole field to the start values cycles and never converges.
-        The projection has to settle, well under the iteration cap, with every anchor intact.
+    def test_a_missing_date_cannot_outrank_an_agreeing_date(self):
+        """The mixture that used to label-switch: many rare exact names and no date of birth.
+
+        An unconstrained fit called that pattern the match class, pushed the match
+        rate to about 0.6, and scored it level with pairs whose dates agree. The
+        ordered starting weights have to keep a full date strictly above a missing
+        date, and a contradiction below both, and the fit has to settle.
         """
         rows = []
-        names = ("exact", "strong", "partial", "weak", "disagree")
-        dobs = ("full", "year_month", "year", "within_1", "conflict", "missing")
-        countries = ("agree", "disagree", "missing")
-        index = 0
-        for name in names:
-            for dob in dobs:
-                for country in countries:
-                    count = 1 + (index * 7 % 17)
-                    rows.extend([_pattern(
-                        name=name, dob=dob, country=country,
-                        rarity="rare" if index % 3 == 0 else "common",
-                        time="impossible" if dob == "conflict" and country == "disagree" else ("ok" if index % 2 == 0 else "missing"),
-                        alias="used" if name == "partial" else "unused",
-                    )] * count)
-                    index += 1
+        rows += [_pattern(name="exact", rarity="rare", dob="missing", country="agree")] * 220
+        rows += [_pattern(name="exact", rarity="rare", dob="full", country="agree", time="ok")] * 80
+        rows += [_pattern(name="strong", rarity="common", dob="full", country="agree", time="ok")] * 40
+        rows += [_pattern(name="exact", rarity="common", dob="conflict", country="disagree", time="ok")] * 250
+        rows += [_pattern(name="strong", rarity="rare", dob="conflict", country="disagree", time="impossible")] * 120
+        rows += [_pattern(name="exact", rarity="rare", dob="within_1", country="disagree", time="ok")] * 90
+        rows += [_pattern(name="partial", rarity="common", dob="missing", country="missing", alias="used")] * 76
         model = L.fit(rows)
         self.assertTrue(model.converged, f"still moving after {model.iterations} iterations")
-        self.assertLess(model.iterations, 30, f"flipped-level mixture took {model.iterations} iterations")
+        self.assertLess(model.iterations, L.EM_ITERS)
+        self.assertLessEqual(model.lambda_, L.LAMBDA_MAX)
         self.assertTrue(L.anchors_hold(model))
-        for field, levels in L.LEVELS.items():
-            self.assertAlmostEqual(sum(model.m[field][level] for level in levels), 1.0, places=6)
-            self.assertAlmostEqual(sum(model.u[field][level] for level in levels), 1.0, places=6)
-        # The date-of-birth field is still estimated: it was not frozen on the start values.
-        self.assertGreater(abs(model.m["dob"]["conflict"] - L.M0["dob"]["conflict"]), 1e-3)
+        self.assertTrue(L.weights_are_ordered(model))
+        same = dict(name="exact", rarity="rare", country="agree", time="ok")
+        full = L.score_pattern(model, _pattern(dob="full", **same))[0]
+        year = L.score_pattern(model, _pattern(dob="year", **same))[0]
+        missing = L.score_pattern(model, _pattern(dob="missing", **same))[0]
+        conflict = L.score_pattern(model, _pattern(
+            name="exact", rarity="common", dob="conflict", country="disagree", time="ok"))[0]
+        self.assertGreater(full, year)
+        self.assertGreater(year, missing)
+        self.assertGreater(missing, conflict)
+        # The pattern that saturated at 0.98: rare exact name, country agrees, no date.
+        bare = L.score_pattern(model, _pattern(name="exact", rarity="rare", dob="missing", country="agree"))[0]
+        self.assertGreater(full, bare)
+        self.assertLess(bare, 0.85)
+        self.assertGreater(full, 0.90)
+        self.assertLess(conflict, 0.15)
         again = L.fit(list(rows))
-        self.assertEqual(L.model_summary(model), L.model_summary(again))
         self.assertEqual(model.iterations, again.iterations)
+        self.assertEqual(L.model_summary(model), L.model_summary(again))
 
     def test_fit_is_deterministic_for_a_fixed_order(self):
         rows = [_pattern(dob="full", country="agree"), _pattern(dob="conflict", country="disagree")] * 6

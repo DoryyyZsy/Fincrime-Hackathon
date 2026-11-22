@@ -8,10 +8,12 @@ The probability is a sum of field weights, log m(level) / u(level). m is the
 probability of a comparison level when the two records are the same entity, and
 u is the probability when they are not. Both are estimated by
 expectation-maximisation on the hits themselves. Nothing here reads the
-practice labels. Initial values, the iteration cap and the order of
-accumulation are fixed. A flipped level is put back on the boundary on its
-own, which is what lets the fit settle instead of cycling. The same folder
-always produces the same scores, including under a different PYTHONHASHSEED.
+practice labels. Comparison weights stay at their start, ordered so a fuller
+date outranks a missing one and a missing one outranks a contradiction.
+Re-estimating those weights from the candidate pairs made a rare name with no
+date, or a hit with no dated report, the definition of a match. Only the match
+rate is estimated, and it cannot rise above LAMBDA_MAX. The same folder always
+produces the same scores, including under a different PYTHONHASHSEED.
 
 A clearance the rules did not already make is refused, and so is a confirmation
 the rules did not already make. Promoting a review on this score would risk an
@@ -38,21 +40,32 @@ UNSAFE_CLEAR_COST = 60
 REVIEW_COST = 3
 CLEAR_PROBABILITY_CEILING = REVIEW_COST / UNSAFE_CLEAR_COST
 
-# The cap is a backstop. On mixtures where one comparison level points the wrong
-# way, a fit that resets the whole field oscillates and never gets here. The
-# projection below removes that cycle, and these bounds are what a fit that is
-# merely slow is allowed to use.
+# The cap is only a backstop. A fit that has not settled by then returns the
+# starting weights rather than a half-updated model. 1e-8 is below the
+# precision the probabilities are written at.
 EM_ITERS = 80
-EM_TOL = 1e-10
-# Stop early when the observed-data log-likelihood has stopped moving and the
-# parameters are already still at the published precision (probabilities are
-# written to 6 decimal places).
-EM_LL_TOL = 1e-8
-EM_LL_PARAM_TOL = 1e-6
-PRIOR_STRENGTH = 8.0
+EM_TOL = 1e-8
 LAMBDA0 = 0.18
+# Screening hits are mostly different people. Letting the match rate climb
+# until a rare name with no date looks certain is the failure mode of an
+# unconstrained fit (it reached 0.62 and tied those pairs with real matches).
+LAMBDA_MAX = 0.30
 PROB_EPS = 1e-6
 PROMOTE = False
+
+# Every comparison field keeps its starting m and u. The pairs being fitted are
+# already name-blocked candidates, so re-estimating the weights lets the match
+# class become "rare exact name" or "no dated report", and a missing date stops
+# counting against a match. The fit estimates only the match rate.
+
+# Most match-like level first. A missing value sits below every real agreement
+# and above a contradiction, so a blank cannot outrank a date that agrees.
+WEIGHT_ORDER = {
+    "name": ("exact", "strong", "partial", "weak", "missing", "disagree"),
+    "dob": ("full", "year_month", "year", "within_1", "missing", "conflict"),
+    "country": ("agree", "missing", "disagree"),
+    "rarity": ("rare", "common", "unmatched"),
+}
 
 # Field order is the accumulation order. Do not sort these at runtime.
 FIELDS = ("name", "rarity", "dob", "country", "entity_type", "document", "alias", "time")
@@ -81,12 +94,15 @@ ANCHORS = {
     "time": {"impossible": -1},
 }
 
-# Fixed start. Each row sums to 1. Anchors hold. Screening hits already agree on
-# a loose name, so a merely strong name is common in both classes and is not
-# anchored.
+# Fixed start. Each row sums to 1. Anchors hold, and WEIGHT_ORDER is monotone.
+# Name evidence is mild on purpose: every pair is already a screening hit, so an
+# exact name is not, by itself, strong evidence of the same person. A missing
+# name is below every real agreement. Date of birth keeps a wide gap: a full
+# date is strong evidence, a missing date is mild evidence against, and a
+# contradiction is strong evidence against.
 M0 = {
-    "name": {"exact": 0.40, "strong": 0.28, "partial": 0.14, "weak": 0.08, "disagree": 0.04, "missing": 0.06},
-    "rarity": {"rare": 0.50, "common": 0.30, "unmatched": 0.20},
+    "name": {"exact": 0.366, "strong": 0.310, "partial": 0.139, "weak": 0.085, "disagree": 0.043, "missing": 0.057},
+    "rarity": {"rare": 0.3869, "common": 0.3761, "unmatched": 0.2370},
     "dob": {"full": 0.40, "year_month": 0.14, "year": 0.16, "within_1": 0.12, "conflict": 0.03, "missing": 0.15},
     "country": {"agree": 0.62, "disagree": 0.08, "missing": 0.30},
     "entity_type": {"agree": 0.90, "disagree": 0.02, "missing": 0.08},
@@ -95,8 +111,8 @@ M0 = {
     "time": {"impossible": 0.02, "ok": 0.68, "missing": 0.30},
 }
 U0 = {
-    "name": {"exact": 0.08, "strong": 0.40, "partial": 0.22, "weak": 0.14, "disagree": 0.12, "missing": 0.04},
-    "rarity": {"rare": 0.12, "common": 0.48, "unmatched": 0.40},
+    "name": {"exact": 0.210, "strong": 0.280, "partial": 0.160, "weak": 0.120, "disagree": 0.130, "missing": 0.100},
+    "rarity": {"rare": 0.2070, "common": 0.4465, "unmatched": 0.3465},
     "dob": {"full": 0.02, "year_month": 0.02, "year": 0.04, "within_1": 0.06, "conflict": 0.46, "missing": 0.40},
     "country": {"agree": 0.22, "disagree": 0.48, "missing": 0.30},
     "entity_type": {"agree": 0.82, "disagree": 0.12, "missing": 0.06},
@@ -556,68 +572,26 @@ def _clip_dist(dist):
     return {level: clipped[level] / total for level in dist}
 
 
-def _project_anchors(field, m_dist, u_dist):
-    """Put a flipped level back on the boundary without touching the rest of the field.
+def _start_dist(source, field):
+    return {level: source[field][level] for level in LEVELS[field]}
 
-    Agreement levels must stay at least as common for a true match as for a
-    non-match, and contradiction levels the other way. Resetting the whole field
-    to the start values when one level flipped is not idempotent: the next
-    E-step undoes it, the likelihood falls, and the fit cycles. This projection
-    sets only the flipped level equal to the other class's probability and
-    rescales the unfixed levels so the distribution still sums to 1. A level
-    that the rescaling then flips is fixed on the next pass. Each pass locks at
-    least one more level, so it finishes, and the result stays on the feasible
-    side of every anchor.
-    """
-    anchors = ANCHORS.get(field)
-    if not anchors:
-        return
-    levels = LEVELS[field]
-    locked = {}
-    for _pass in range(len(levels) + 1):
-        progressed = False
-        for level, sign in anchors.items():
-            if level in locked:
-                continue
-            if sign * (m_dist[level] - u_dist[level]) < -1e-15:
-                locked[level] = u_dist[level]
-                progressed = True
-        if not progressed:
-            return
-        free = [level for level in levels if level not in locked]
-        floor_mass = PROB_EPS * len(free)
-        locked_mass = sum(locked.values())
-        if locked_mass > 1.0 - floor_mass:
-            scale = (1.0 - floor_mass) / locked_mass if locked_mass else 1.0
-            for level in locked:
-                locked[level] *= scale
-            locked_mass = sum(locked.values())
-        need = 1.0 - locked_mass
-        free_mass = sum(m_dist[level] for level in free)
-        updated = {level: locked[level] for level in locked}
-        if not free:
-            pass
-        elif free_mass <= PROB_EPS:
-            share = need / len(free)
-            for level in free:
-                updated[level] = share
-        else:
-            scale = need / free_mass
-            for level in free:
-                updated[level] = m_dist[level] * scale
-            for level in free:
-                if updated[level] < PROB_EPS:
-                    updated[level] = PROB_EPS
-            drift = sum(updated[level] for level in levels) - 1.0
-            biggest = free[0]
-            for level in free[1:]:
-                if updated[level] > updated[biggest]:
-                    biggest = level
-            updated[biggest] = max(PROB_EPS, updated[biggest] - drift)
-        for level in levels:
-            m_dist[level] = updated[level]
-        if not free:
-            return
+
+def level_weight(model, field, level):
+    """Log2 likelihood ratio of one comparison level. Positive favours a match."""
+    m_level = max(model.m[field][level], PROB_EPS)
+    u_level = max(model.u[field][level], PROB_EPS)
+    return math.log(m_level / u_level) / math.log(2.0)
+
+
+def weights_are_ordered(model, tol=1e-9):
+    """True when each ordered field is non-increasing and a missing value is not positive evidence."""
+    for field, order in WEIGHT_ORDER.items():
+        weights = [level_weight(model, field, level) for level in order]
+        if any(weights[i] + tol < weights[i + 1] for i in range(len(weights) - 1)):
+            return False
+        if "missing" in order and level_weight(model, field, "missing") > tol:
+            return False
+    return True
 
 
 def _log_level(dist, level):
@@ -639,15 +613,6 @@ def _pair_logs(fit, pattern):
     return log_m, log_u
 
 
-def _delta(old, new):
-    diff = abs(old.lambda_ - new.lambda_)
-    for field in FIELDS:
-        for level in LEVELS[field]:
-            diff = max(diff, abs(old.m[field][level] - new.m[field][level]))
-            diff = max(diff, abs(old.u[field][level] - new.u[field][level]))
-    return diff
-
-
 def _observed_loglik(model, patterns):
     """Log P(patterns | model), summing in pattern order so the total is repeatable."""
     total = 0.0
@@ -667,19 +632,29 @@ def anchors_hold(model, tol=1e-8):
     return True
 
 
-def fit(patterns):
-    """EM for m, u and the match prior. `patterns` must already be in a fixed order.
+def _fallback_start(n_pairs, iterations):
+    """Starting weights, used when a fit does not settle. Ranking stays ordered."""
+    model = initial_fit(n_pairs)
+    model.iterations = iterations
+    model.converged = False
+    return model
 
-    The caller sorts pairs before calling, so the weighted sums do not depend on
-    hash randomisation or on the order the hits were resolved. A step stops when
-    the largest parameter change is below EM_TOL, or when the observed-data
-    log-likelihood has stopped moving and the parameters are already still at
-    the published precision. EM_ITERS is only the backstop.
+
+def fit(patterns):
+    """EM for the match rate only. `patterns` must already be in a fixed order.
+
+    m and u stay at their start, so the iteration is one-dimensional and cannot
+    label-switch. The caller sorts pairs before calling. The match rate is
+    shrunk halfway toward LAMBDA0 and then capped at LAMBDA_MAX. A fit that is
+    still moving at EM_ITERS is discarded in favour of the starting rate.
     """
     if not patterns:
         return initial_fit(0)
-    current = initial_fit(len(patterns))
+    n_pairs = len(patterns)
+    current = initial_fit(n_pairs)
     current.log_likelihood = _observed_loglik(current, patterns)
+    m = {field: _start_dist(M0, field) for field in FIELDS}
+    u = {field: _start_dist(U0, field) for field in FIELDS}
     converged = False
     last = 0
     for last in range(1, EM_ITERS + 1):
@@ -687,36 +662,18 @@ def fit(patterns):
         for pattern in patterns:
             log_m, log_u = _pair_logs(current, pattern)
             posts.append(_posterior(log_m, log_u))
-        m = {}
-        u = {}
-        for field in FIELDS:
-            m_counts = {level: PRIOR_STRENGTH * M0[field][level] for level in LEVELS[field]}
-            u_counts = {level: PRIOR_STRENGTH * U0[field][level] for level in LEVELS[field]}
-            m_total = PRIOR_STRENGTH
-            u_total = PRIOR_STRENGTH
-            for post, pattern in zip(posts, patterns):
-                level = pattern[field]
-                # An unseen level keeps its prior mass. A level that does occur
-                # cannot fall through the floor in _clip_dist, so an empty bin
-                # cannot dominate the weight with log(0).
-                m_counts[level] += post
-                u_counts[level] += 1.0 - post
-                m_total += post
-                u_total += 1.0 - post
-            m[field] = _clip_dist({level: m_counts[level] / m_total for level in LEVELS[field]})
-            u[field] = _clip_dist({level: u_counts[level] / u_total for level in LEVELS[field]})
-            _project_anchors(field, m[field], u[field])
-        lam = (sum(posts) + PRIOR_STRENGTH * LAMBDA0) / (len(posts) + PRIOR_STRENGTH)
-        lam = min(1.0 - PROB_EPS, max(PROB_EPS, lam))
-        updated = Fit(lam, m, u, last, False, len(patterns))
+        raw = (sum(posts) + n_pairs * LAMBDA0) / (2.0 * n_pairs)
+        lam = min(LAMBDA_MAX, max(PROB_EPS, raw))
+        updated = Fit(lam, m, u, last, False, n_pairs)
         updated.log_likelihood = _observed_loglik(updated, patterns)
-        change = _delta(current, updated)
-        gain = updated.log_likelihood - current.log_likelihood
+        change = abs(updated.lambda_ - current.lambda_)
         current = updated
-        if change < EM_TOL or (gain < EM_LL_TOL and change < EM_LL_PARAM_TOL):
+        if change < EM_TOL:
             converged = True
             break
-    current.converged = converged
+    if not converged:
+        return _fallback_start(n_pairs, last)
+    current.converged = True
     current.iterations = last
     return current
 

@@ -31,7 +31,7 @@ This runs every check and prints PASS or FAIL for each:
 | 6. Tests | the screening test suite (pytest if installed, otherwise the stdlib `unittest` files) |
 
 Expected on the dev set: **11/11 checks passed**. The validator reports 0 problems and 50/50 practice hits
-with 0 unsafe clearances; the test suite reports 115 passed.
+with 0 unsafe clearances; the test suite reports 116 passed.
 
 Other commands:
 
@@ -213,15 +213,18 @@ Each comparison is a pattern of levels:
   dead before screening).
 
 For each level, m is how often it appears when the two records are the same entity, and u is how often it
-appears when they are not. Expectation-maximisation estimates m, u and the match prior from the unlabelled
-hits in the folder being scored. The 50 practice labels are not used. The start values, a cap of 80
-iterations, and the order of the sums are fixed. A step stops when the largest parameter change is under
-`1e-10`, or when the log-likelihood has stopped moving and the parameters are already still at the printed
-precision. If one level flips meaning (a one-year date gap turning up more often for different people, for
-example), only that level is put back on the boundary and the other levels keep the values just estimated.
-Putting the whole field back to its start values made the fit cycle, so it used all 20 steps and never
-settled. The same folder therefore gives the same scores under any `PYTHONHASHSEED`. The module is Python
-standard library only.
+appears when they are not. Those weights **stay at their start**. They are ordered: a full date outranks a
+year, which outranks a missing date, which outranks a contradiction, and the same order holds for names.
+An exact name is only mild evidence, because every pair is already a screening hit. A missing date is mild
+evidence against a match, not for one. Re-estimating the weights from the candidate pairs made the match
+class "a rare exact name" (and, on the next try, "no dated report"), pushed the match rate to 0.62, and
+scored a missing date level with a date that agrees.
+
+Only the match rate is estimated, from the unlabelled hits. It is shrunk halfway toward 0.18 and capped at
+0.30, so the rate is one number and the iteration cannot cycle or label-switch. A step stops when that
+number changes by less than `1e-8`. The cap of 80 iterations is a backstop: a fit that is still moving then
+is discarded and the starting rate is used. Practice labels are not used. The same folder therefore gives
+the same scores under any `PYTHONHASHSEED`. The module is Python standard library only.
 
 The score does not move a decision. `guarded_decision` refuses a `DIFFERENT_ENTITY` the rules did not already
 return, and refuses a `SAME_ENTITY` the rules did not already return. An unsafe clearance costs 60 and a
