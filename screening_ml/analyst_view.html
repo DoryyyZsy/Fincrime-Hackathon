@@ -107,6 +107,7 @@ body.editing .row .m{grid-column:2/-1}
     <a class="switch" href="review.html" title="Why each hit was decided; analyst and MLRO queues">Decision review</a>
     <a class="switch" href="staff.html" title="Switch to the staff check page">Staff check →</a>
     <button class="s" id="theme" title="Toggle theme">◐</button></div>
+  <div class="sub" id="scoreNote"></div>
   <div class="kpis" id="kpis"></div>
   <div class="bar" id="bar" aria-hidden="true"></div>
 </header>
@@ -143,7 +144,22 @@ body.editing .row .m{grid-column:2/-1}
 <script>
 const DATA = /*__DATA__*/null;
 const H = DATA.hits, R = DATA.records;
+const SCORE = DATA.score || null;
 const LABEL = {DIFFERENT_ENTITY:"Cleared", SAME_ENTITY:"Same entity", REVIEW:"Review"};
+const FIELD_LABEL = {name:"Name", rarity:"Name rarity", dob:"Date of birth", country:"Country", entity_type:"Person or company", document:"Document", alias:"Alias", time:"Timing"};
+const signed = n => { const v = Number(n); if (!Number.isFinite(v)) return "–"; return (v > 0 ? "+" : "") + v.toFixed(4); };
+const pct1 = n => { const v = Number(n); if (!Number.isFinite(v)) return "–"; return (Math.round(v * 1000) / 10).toFixed(1) + "%"; };
+function fitLine(score){
+  if (!score) return "Match score is not available for this folder. Decisions are the rules alone.";
+  const n = Number(score.iterations), step = n === 1 ? "iteration" : "iterations";
+  const settled = score.converged ? `converged in ${n} ${step}` : `did not converge after ${n} ${step}, so the starting match rate was kept`;
+  const rate = Number(score.match_rate);
+  const weights = score.weights_at_start ? "Comparison weights stay at their start. " : (score.weights_at_start === false ? "Comparison weights differ from their start. " : "");
+  const role = score.promote
+    ? "Promotion is on. A clearance or a confirmation the rules did not already make is still refused."
+    : "The score ranks the review queue and never changes a decision.";
+  return `Match rate ${Number.isFinite(rate) ? rate.toFixed(6) : "–"} · ${score.pairs} pairs · ${settled}. ${weights}${role}`;
+}
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const isHeld = h => /uncertain evidence/.test(h.reason);
 let ov = {}; try { ov = JSON.parse(localStorage.getItem("screening-overrides") || "{}"); } catch (e) {}
@@ -157,6 +173,7 @@ let state = {q:"", d:"", code:"", gold:false, held:false, ov:false, sel:null};
 try { const t = localStorage.getItem("screening-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
 document.getElementById("meta").textContent = `${H.length} hits · ${DATA.folder} · built ${DATA.built}`;
+document.getElementById("scoreNote").textContent = fitLine(SCORE);
 const codes = [...new Set(H.map(h => h.code))].sort();
 document.getElementById("code").insertAdjacentHTML("beforeend", codes.map(c => `<option>${c}</option>`).join(""));
 
@@ -202,7 +219,11 @@ function filtered(){
   const rows = live().filter(h => (!state.d || eff(h) === state.d) && (!state.code || h.code === state.code)
     && (!state.gold || h.gold) && (!state.held || isHeld(h)) && (!state.ov || ov[h.hit_id])
     && (!q || [h.hit_id, h.alert_id, h.record, h.screened.name, h.hit.name, ...(h.hit.names || [])].join(" ").toLowerCase().includes(q)));
-  if (state.d === "REVIEW") rows.sort((a, b) => (b.match_probability || 0) - (a.match_probability || 0) || String(a.hit_id).localeCompare(b.hit_id));
+  if (state.d === "REVIEW") rows.sort((a, b) => {
+    const ar = a.review_rank, br = b.review_rank;
+    if (ar != null && br != null && ar !== br) return ar - br;
+    return (b.match_probability || 0) - (a.match_probability || 0) || String(a.hit_id).localeCompare(b.hit_id);
+  });
   return rows;
 }
 
@@ -215,7 +236,7 @@ function render(){
       <input type="checkbox" class="pick" aria-label="Select ${esc(h.hit_id)}" data-pick="${h.hit_id}" ${picked.has(h.hit_id) ? "checked" : ""}>
       <span class="n">${esc(h.screened.name)}</span>
       <span class="badge ${isHeld(h) && !changed ? "held" : d}">${isHeld(h) && !changed ? "Held" : LABEL[d]}${o ? " ✎" : ""}</span>
-      <span class="m">${esc(h.hit.name)} · ${esc(h.hit.category || "")} · ${h.code}${h.match_probability == null ? "" : ` · ${Math.round(100 * h.match_probability)}% same`}${h.review_rank ? ` · #${h.review_rank}` : ""}${h.gold ? " · ★" : ""}</span></div>`;
+      <span class="m">${h.match_probability == null ? "" : `${pct1(h.match_probability)} same${h.review_rank ? ` · queue #${h.review_rank}` : ""} · `}${esc(h.hit.name)} · ${esc(h.hit.category || "")} · ${h.code}${h.gold ? " · ★" : ""}</span></div>`;
   }).join("");
   list.querySelectorAll(".row").forEach(el => { el.onclick = e => { if (!e.target.matches(".pick")) select(el.dataset.id); };
     el.onkeydown = e => { if (e.key === "Enter") select(el.dataset.id); }; });
@@ -235,6 +256,16 @@ function select(id, scroll = true){
 const ids = list => (list || []).map(i => `<button class="id" data-rec="${esc(i)}">${esc(i)}</button>`).join("");
 const src = list => list && list.length ? ` <span class="ids">${ids(list)}</span>` : "";
 
+function scoreBlock(h){
+  if (h.match_probability == null) return "";
+  const levels = h.match_levels || {}, weights = h.field_weights || {};
+  const keys = Object.keys(weights).length ? Object.keys(weights) : Object.keys(levels);
+  const rows = keys.map(k => `<tr><td>${esc(FIELD_LABEL[k] || k)}</td><td class="code">${esc(levels[k] ?? "–")}</td><td class="code">${esc(signed(weights[k]))}</td></tr>`).join("");
+  const rank = h.review_rank ? `Review queue #${h.review_rank}. ` : "Not in the review queue. ";
+  return `<p class="sub">Probability ${esc(Number(h.match_probability).toFixed(6))} (${pct1(h.match_probability)}) · log2 weight ${esc(signed(h.match_weight))}. ${rank}The rules made this decision.</p>
+    ${rows ? `<table><tr><td>Field</td><td class="code">Level</td><td class="code">log2 weight</td></tr>${rows}</table>` : ""}`;
+}
+
 function detail(h){
   const box = document.getElementById("detail");
   if (!h) { box.innerHTML = `<div class="empty">No hits match these filters</div>`; return; }
@@ -250,7 +281,7 @@ function detail(h){
     ${p.unread.length ? `<tr><td class="warn">Unread notes</td><td>${ids(p.unread)}</td></tr>` : ""}` : "";
   const hrow = `
     <tr><td>Names</td><td>${x.names.map(esc).join("<br>")}</td></tr>
-    <tr><td>Listing</td><td>${esc(x.category)} · ${esc(x.type)} · match score ${esc(x.score)}</td></tr>
+    <tr><td>Listing</td><td>${esc(x.category)} · ${esc(x.type)}${x.score == null || x.score === "" ? "" : ` · list score ${esc(x.score)}`}</td></tr>
     <tr><td>Date of birth</td><td>${x.dobs.length ? esc(x.dobs.join(" or ")) + ` <span class="code">from ${esc(x.dob_source)}</span>` + src(x.dob_evidence) : "–"}
       ${x.dob_text ? `<div class="sub">“${esc(x.dob_text.slice(0, 220))}”</div>` : ""}</td></tr>
     <tr><td>Countries</td><td>${x.countries.map(esc).join(", ") || "–"}</td></tr>
@@ -264,7 +295,7 @@ function detail(h){
       <div class="verdict"><span class="badge ${isHeld(h) ? "held" : h.decision}">${LABEL[h.decision]}${isHeld(h) ? " · held by safety net" : ""}</span>
         <span class="code">${h.code}</span><span class="code">${h.hit_id} · alert ${h.alert_id} · ${h.n_hits_in_alert} hit(s) · screened ${esc(h.screened_at)}</span></div>
       <p class="reason">${esc(h.reason)}</p>
-      ${h.match_probability == null ? "" : `<p class="sub">Match score ${Math.round(1000 * h.match_probability) / 10}% same person${h.review_rank ? ` · review queue #${h.review_rank}` : ""}. The rules made the decision. This score only ranks the review queue (${Object.entries(h.match_levels || {}).map(([k, v]) => `${k}=${v}`).join(", ")}).</p>`}
+      ${scoreBlock(h)}
       <div class="ids"><span class="sub">Customer record</span> ${h.record ? (h.record === "AMBIGUOUS" ? "<b>AMBIGUOUS</b>" : ids([h.record])) : "<i>none</i>"}
         <span class="sub" style="margin-left:10px">Evidence</span> ${ids(h.evidence) || "–"}</div>
     </div>

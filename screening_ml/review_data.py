@@ -17,7 +17,7 @@ from . import normalize as N
 from .compare import CLEAR_ORDER, CODE_DECISION, decide_case
 from .customer import resolve
 from .hit import build_hit
-from .linkage import score_cases
+from .linkage import fit_for_pages, score_cases
 
 QA_SAMPLE_PERCENT = 5
 ROUTE = {"SAME_ENTITY": "mlro", "REVIEW": "analyst", "DIFFERENT_ENTITY": "cleared"}
@@ -361,6 +361,7 @@ class ReviewBook:
         for s in (x for xs in room.search_by_query.values() for x in xs):
             self._records[s["result_id"]] = s
         self.items, self.detail = [], {}
+        self.score = None
         by_alert = {}
         cases, raws = [], []
         for alert in room.alerts:
@@ -392,19 +393,21 @@ class ReviewBook:
                     "records": [{"id": i, "record": self._record(i)} for i in case.teacher_evidence],
                 }
         try:
-            scores, _fit = score_cases(room, cases, raws)
+            scores, fit = score_cases(room, cases, raws)
         except Exception:
-            scores = []
-        for item, score in zip(self.items, scores):
-            item["match_probability"] = score["match_probability"]
-            item["match_weight"] = score["match_weight"]
-            item["review_rank"] = score["review_rank"]
-            detail = self.detail[item["hit_id"]]
-            detail["match_probability"] = score["match_probability"]
-            detail["match_weight"] = score["match_weight"]
-            detail["review_rank"] = score["review_rank"]
-            detail["match_levels"] = score["levels"]
-            detail["field_weights"] = score["field_weights"]
+            scores, fit = [], None
+        if scores and fit is not None and len(scores) == len(self.items):
+            self.score = fit_for_pages(fit)
+            for item, score in zip(self.items, scores):
+                item["match_probability"] = score["match_probability"]
+                item["match_weight"] = score["match_weight"]
+                item["review_rank"] = score["review_rank"]
+                detail = self.detail[item["hit_id"]]
+                detail["match_probability"] = score["match_probability"]
+                detail["match_weight"] = score["match_weight"]
+                detail["review_rank"] = score["review_rank"]
+                detail["match_levels"] = score["levels"]
+                detail["field_weights"] = score["field_weights"]
         for item in self.items:   # an alert closes only when every hit in it is cleared
             item["alert_open"] = any(d != "DIFFERENT_ENTITY" for d in by_alert[item["alert_id"]])
             self.detail[item["hit_id"]]["alert_open"] = item["alert_open"]

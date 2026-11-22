@@ -16,7 +16,7 @@ from .compare import CLEAR_ORDER, CONFIRM_ORDER, decide_case
 from .customer import resolve
 from .data import DataRoom
 from .hit import build_hit
-from .linkage import score_cases
+from .linkage import fit_for_pages, score_cases
 
 TEMPLATE = os.path.join(os.path.dirname(__file__), "analyst_view.html")
 CHECK_ORDER = CLEAR_ORDER + CONFIRM_ORDER + ["AMBIGUOUS_CUSTOMER_RECORD", "INSUFFICIENT_DATA"]
@@ -129,18 +129,21 @@ def build(folder):
             "hit": _hit(hf, raw), "comparisons": comps, "n_hits_in_alert": len(alert["hit_ids"]),
             "gold": {"decision": g["decision"], "codes": g["reason_codes"], "reason": g.get("reference_reason")} if g else None,
         })
+    score_meta = None
     try:
-        scores, _fit = score_cases(room, cases, raws)
+        scores, fit = score_cases(room, cases, raws)
     except Exception:
-        scores = []
-    for hit, score in zip(hits, scores):
-        hit["match_probability"] = score["match_probability"]
-        hit["match_weight"] = score["match_weight"]
-        hit["review_rank"] = score["review_rank"]
-        hit["match_levels"] = score["levels"]
-        hit["field_weights"] = score["field_weights"]
-    return {"hits": hits, "records": records, "folder": os.path.abspath(folder),
-            "built": time.strftime("%Y-%m-%d %H:%M")}
+        scores, fit = [], None
+    if scores and fit is not None and len(scores) == len(hits):
+        score_meta = fit_for_pages(fit)
+        for hit, score in zip(hits, scores):
+            hit["match_probability"] = score["match_probability"]
+            hit["match_weight"] = score["match_weight"]
+            hit["review_rank"] = score["review_rank"]
+            hit["match_levels"] = score["levels"]
+            hit["field_weights"] = score["field_weights"]
+    return {"hits": hits, "records": records, "score": score_meta,
+            "folder": os.path.abspath(folder), "built": time.strftime("%Y-%m-%d %H:%M")}
 
 
 def main(argv=None):
