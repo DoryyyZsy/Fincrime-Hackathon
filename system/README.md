@@ -10,7 +10,7 @@ For every sanctions, PEP, enforcement or adverse-media hit raised against a cust
 whether the hit **is the customer** (`SAME_ENTITY`), **someone else** (`DIFFERENT_ENTITY`), or **needs a
 person** (`REVIEW`). It also gives a reason code, the resolved customer record, a 2–4 sentence reason, and the
 IDs of the records that decided it. It is Python 3 standard library only, deterministic, and takes about
-10 seconds on the development set. HitNet makes the decision. A Fellegi–Sunter match score ranks the review queue and does not change it.
+10 seconds on the development set. A Fellegi–Sunter match score ranks the review queue and does not change those decisions.
 
 > `system/README.md` is a copy of this file, because the brief asks for a README in `system/`.
 
@@ -35,8 +35,8 @@ This runs every check and prints PASS or FAIL for each:
 | 6. Tests | the screening test suite (pytest if installed, otherwise the stdlib `unittest` files) |
 
 Default verification checks output format and reproducibility. Practice scoring is a separate command
-(`python inspector.py score` or `python -m screening_ml.eval_linkage`). The test suite reports 135 passed,
-including the identity tests and the linkage tests.
+(`python inspector.py score` or `python -m screening_ml.eval_linkage`). `python3 -m pytest` reports 147 passed,
+including the identity tests, the linkage tests, and the earlier prototype tests.
 
 Other commands:
 
@@ -65,13 +65,17 @@ python3 system/run <data folder> <output file>      # e.g. system/run data/scree
 
 | | |
 |---|---|
-| Output | 819 lines, 0 problems (`validate.py`) |
-| Decisions | 439 `DIFFERENT_ENTITY`, 122 `SAME_ENTITY`, 258 `REVIEW` |
-| Reasons | all 819 have 2 to 4 sentences |
-| Reproducibility | byte-identical across runs and hash seeds |
+| Output | 819 lines in the committed `output/dev.jsonl` |
+| Decisions in that file | 466 `DIFFERENT_ENTITY`, 135 `SAME_ENTITY`, 218 `REVIEW` |
+| Reasons | 3 or 4 sentences on every committed line; the composer allows 2 to 4 |
+| Reproducibility | two runs of the same code with different `PYTHONHASHSEED` values are byte-identical |
 | Time / cost | about 10 s with no model key, $0 |
 
-No practice accuracy is reported for this checkpoint. The unseen set supplies the independent test.
+The committed file is the rule output from before this merge. It was not regenerated. Main's changes to
+`compare.py`, `normalize.py`, and `reasoning.py` can change a fresh rule run, and a HitNet run of the same
+folder was 439 `DIFFERENT_ENTITY`, 122 `SAME_ENTITY`, 258 `REVIEW`. HitNet does not write the row. Rerun
+`python inspector.py` on the dev folder. The byte-identical check compares a fresh run with this committed
+file, so it fails until that run replaces the file.
 
 ## Architecture
 
@@ -93,14 +97,11 @@ search_results.jsonl┘    names + aliases; DOB from `dobs`, else ages in the pr
                     confirm only on agreement: name + DOB (+ country); company: name + country
                     otherwise REVIEW; safety net holds clears that rest on text we may have misread
                          ▼
-                    4. HITNET  (neural.py)
-                    scores the comparison; evidence checks can send a clearance or a confirmation back to review
-                         ▼
-                    5. MATCH SCORE  (linkage.py)
+                    4. MATCH SCORE  (linkage.py)
                     Fellegi–Sunter probability the hit is the customer, fitted by EM on the unlabelled hits
-                    ranks the REVIEW queue; it does not change HitNet's decision
+                    ranks the REVIEW queue; the rules keep the decision
                          ▼
-                    6. OUTPUT  (pipeline.py, reasoning.py)  one JSON line per hit
+                    5. OUTPUT  (pipeline.py, reasoning.py)  one JSON line per hit
                     the probability is written beside it, in `<output>.scores.jsonl`
 ```
 
@@ -116,8 +117,8 @@ evidence.
 | `screening_ml/hit.py` | watchlist-side facts from fields, free text and search results |
 | `screening_ml/compare.py` | the SOP checks, the safety net, reason codes and evidence |
 | `screening_ml/reasoning.py` | the `reason` text |
-| `screening_ml/neural.py` | HitNet inference; writes the decision, with the evidence checks it already applies |
-| `screening_ml/linkage.py` | Fellegi–Sunter match probability; ranks HitNet's review queue and does not decide |
+| `screening_ml/neural.py` | packaged HitNet inference; not called when the row is written |
+| `screening_ml/linkage.py` | Fellegi–Sunter match probability; ranks reviews and does not decide |
 | `screening_ml/pipeline.py`, `llm_extract.py` | run order, and the optional model extractor |
 | `inspector.py` | the test command above |
 
@@ -260,7 +261,7 @@ practice labels, and what a cost threshold would have cleared. That table is not
 
 ## Model and prompts
 
-HitNet proposes the decision. Evidence checks can refer it to review. An **optional** extractor (`screening_ml/llm_extract.py`) reads
+The rule engine makes the decision. HitNet is packaged in `screening_ml/neural.py` and does not write the row. An **optional** extractor (`screening_ml/llm_extract.py`) reads
 free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (stdlib `urllib`).
 `SCREENING_LLM=0` turns it off.
 
@@ -366,7 +367,7 @@ The start page is the screening review; the staff and management pages have butt
 
 ## Selected neural network
 
-HitNet writes the decision. The Fellegi–Sunter score only ranks `REVIEW`.
+HitNet is packaged beside the Fellegi–Sunter score. `system/run` does not replace the rule decision with it. The score only ranks `REVIEW`.
 
 HitNet has hidden layers of 128 and 64 units, a three-way decision head and a reason-code head.
 HitNet was fitted from scratch on 407 rule-labeled pairs and selected by validation loss on

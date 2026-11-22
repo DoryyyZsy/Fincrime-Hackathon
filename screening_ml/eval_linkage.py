@@ -50,7 +50,7 @@ def report(folder):
     from .data import DataRoom
 
     room = DataRoom(folder)
-    # HitNet decides. The score is computed beside that decision and is not written back onto it.
+    # Rules only. The score is computed beside the decision and is not written back onto it.
     rows, errors, _stats, scores, fit = adjudicate(room, None)
     if not scores or fit is None:
         print("The match score did not fit. Decisions were still produced.")
@@ -67,7 +67,7 @@ def report(folder):
         for row, score in zip(rows, scores) if row["decision"] != score["decision"]
     ]
     print(f"decisions changed by the score: {len(changed)}")
-    _print_group("By the HitNet decision", [(row["decision"], score["match_probability"]) for row, score in zip(rows, scores)])
+    _print_group("By the rule decision", [(row["decision"], score["match_probability"]) for row, score in zip(rows, scores)])
 
     ranked = [score for score in scores if score["decision"] == "REVIEW"]
     print("\nReview queue, highest P(same) first (top 10):")
@@ -95,8 +95,8 @@ def report(folder):
         ties = sum(1 for left in same for right in different if left == right)
         print(f"pairwise: a gold SAME_ENTITY outranks a gold DIFFERENT_ENTITY on {wins}/{total} pairs ({ties} ties)")
 
-    print("\nCounterfactual: clearing a HitNet REVIEW hit when P(same) is below a threshold.")
-    print("The engine does not do this. The score is not allowed to change HitNet's decision.")
+    print("\nCounterfactual: clearing a REVIEW hit when P(same) is below a threshold.")
+    print("The engine does not do this. A rule contradiction is still required for a clearance.")
     unsafe_anywhere = False
     for threshold in (CLEAR_PROBABILITY_CEILING, 0.02, 0.01):
         picked = [score for score in scores if score["decision"] == "REVIEW" and score["match_probability"] < threshold]
@@ -111,7 +111,7 @@ def report(folder):
         print("Promotion stays off: at least one threshold would clear a practice hit that is not a different person.")
     else:
         print("No labelled unsafe clearance in this sweep. Promotion stays off anyway: most hits are unlabelled, "
-              "the unseen set is not here, and the score does not clear a HitNet review.")
+              "the unseen set is not here, and the rules did not find a contradiction to clear on.")
     return 0
 
 

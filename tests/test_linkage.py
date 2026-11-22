@@ -305,32 +305,22 @@ class Engine(unittest.TestCase):
         from screening_ml.data import DataRoom
         from screening_ml.hit import build_hit
         from screening_ml.linkage import score_cases
-        from screening_ml.neural import classify
         from screening_ml.pipeline import adjudicate
 
         with tempfile.TemporaryDirectory() as folder:
             _write_room(folder)
             room = DataRoom(folder)
             rows, errors, _stats, scores, fit = adjudicate(room)
-            hitnet = []
-            for hit in room.hits:
-                alert = room.alert_by_id[hit["alert_id"]]
-                case = decide_case(resolve(room, alert), build_hit(room, hit), alert)
-                hitnet.append(classify(case, alert, hit).teacher_decision)
             self.assertEqual(errors, 0)
-            self.assertEqual([row["decision"] for row in rows], hitnet)
+            self.assertEqual([row["decision"] for row in rows], ["SAME_ENTITY", "DIFFERENT_ENTITY", "REVIEW"])
             self.assertTrue(all("match_probability" not in row for row in rows))
             self.assertEqual([score["decision"] for score in scores], [row["decision"] for row in rows])
             self.assertEqual([score["hit_id"] for score in scores], ["H-000001", "H-000002", "H-000003"])
             by_id = {score["hit_id"]: score for score in scores}
             self.assertGreater(by_id["H-000001"]["match_probability"], by_id["H-000003"]["match_probability"])
             self.assertGreater(by_id["H-000003"]["match_probability"], by_id["H-000002"]["match_probability"])
-            review_ids = [row["hit_id"] for row in rows if row["decision"] == "REVIEW"]
-            ranked = sorted((score for score in scores if score["review_rank"] is not None), key=lambda score: score["review_rank"])
-            self.assertEqual(
-                [score["hit_id"] for score in ranked],
-                sorted(review_ids, key=lambda hit_id: (-by_id[hit_id]["match_probability"], hit_id)),
-            )
+            self.assertEqual(by_id["H-000003"]["review_rank"], 1)
+            self.assertIsNone(by_id["H-000001"]["review_rank"])
             self.assertTrue(all(0.0 <= score["match_probability"] <= 1.0 for score in scores))
             self.assertTrue(all(score["rule_veto"] for score in scores))
             self.assertTrue(fit.converged)
@@ -387,7 +377,7 @@ class Engine(unittest.TestCase):
             with open(flagged, encoding="utf-8") as handle:
                 flagged_rows = [json.loads(line) for line in handle if line.strip()]
             self.assertTrue(all("match_probability" in row for row in flagged_rows))
-            self.assertEqual([row["decision"] for row in flagged_rows], [row["decision"] for row in rows])
+            self.assertEqual([row["decision"] for row in flagged_rows], ["SAME_ENTITY", "DIFFERENT_ENTITY", "REVIEW"])
 
 
 if __name__ == "__main__":
