@@ -379,6 +379,73 @@ class Engine(unittest.TestCase):
             self.assertTrue(all("match_probability" in row for row in flagged_rows))
             self.assertEqual([row["decision"] for row in flagged_rows], ["SAME_ENTITY", "DIFFERENT_ENTITY", "REVIEW"])
 
+    def test_demo_pages_show_the_fit_and_keep_the_rule_decision(self):
+        from screening_ml.analyst_view import build
+        from screening_ml.data import DataRoom
+        from screening_ml.pipeline import adjudicate
+        from screening_ml.review_data import ReviewBook
+
+        with tempfile.TemporaryDirectory() as folder:
+            _write_room(folder)
+            room = DataRoom(folder)
+            rows, errors, _stats, scores, fit = adjudicate(room)
+            self.assertEqual(errors, 0)
+            payload = build(folder)
+            self.assertEqual([hit["decision"] for hit in payload["hits"]], [row["decision"] for row in rows])
+            self.assertEqual(payload["score"]["match_rate"], L.model_summary(fit)["lambda"])
+            self.assertEqual(payload["score"]["iterations"], fit.iterations)
+            self.assertEqual(payload["score"]["converged"], bool(fit.converged))
+            self.assertEqual(payload["score"]["pairs"], fit.n_pairs)
+            self.assertFalse(payload["score"]["promote"])
+            self.assertTrue(payload["score"]["weights_at_start"])
+            self.assertNotIn("m", payload["score"])
+            self.assertNotIn("u", payload["score"])
+            by_id = {score["hit_id"]: score for score in scores}
+            for hit in payload["hits"]:
+                score = by_id[hit["hit_id"]]
+                self.assertEqual(hit["match_probability"], score["match_probability"])
+                self.assertEqual(hit["match_weight"], score["match_weight"])
+                self.assertEqual(hit["review_rank"], score["review_rank"])
+                self.assertEqual(hit["match_levels"], score["levels"])
+                self.assertEqual(hit["field_weights"], score["field_weights"])
+                self.assertEqual(set(hit["field_weights"]), set(L.FIELDS))
+            book = ReviewBook(room, lambda case, raw: {"evidence": []}, os.path.join(folder, "audit.jsonl"))
+            self.assertEqual(book.score, payload["score"])
+            self.assertEqual([item["decision"] for item in book.items], [row["decision"] for row in rows])
+            review = book.hit("H-000003")
+            self.assertEqual(review["review_rank"], 1)
+            self.assertEqual(review["field_weights"], by_id["H-000003"]["field_weights"])
+            self.assertIsNone(book.hit("H-000001")["review_rank"])
+
+    def test_demo_pages_omit_the_score_when_it_cannot_be_computed(self):
+        import screening_ml.analyst_view as analyst_view
+        import screening_ml.review_data as review_data
+        from screening_ml.data import DataRoom
+
+        with tempfile.TemporaryDirectory() as folder:
+            _write_room(folder)
+            saved = analyst_view.score_cases, review_data.score_cases
+
+            def boom(*_args, **_kwargs):
+                raise RuntimeError("score unavailable")
+
+            analyst_view.score_cases = boom
+            review_data.score_cases = boom
+            try:
+                payload = analyst_view.build(folder)
+                self.assertIsNone(payload["score"])
+                self.assertTrue(all("match_probability" not in hit for hit in payload["hits"]))
+                self.assertEqual([hit["decision"] for hit in payload["hits"]],
+                                 ["SAME_ENTITY", "DIFFERENT_ENTITY", "REVIEW"])
+                book = review_data.ReviewBook(
+                    DataRoom(folder), lambda case, raw: {"evidence": []}, os.path.join(folder, "audit.jsonl"))
+                self.assertIsNone(book.score)
+                self.assertTrue(all("match_probability" not in item for item in book.items))
+                self.assertEqual([item["decision"] for item in book.items],
+                                 ["SAME_ENTITY", "DIFFERENT_ENTITY", "REVIEW"])
+            finally:
+                analyst_view.score_cases, review_data.score_cases = saved
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -710,6 +710,25 @@ def model_summary(model):
     }
 
 
+def fit_for_pages(model):
+    """The fit fields the review pages show. Same numbers as `.scores.meta.json`.
+
+    Only the match rate is estimated. m and u stay at their start, so this view
+    leaves those tables out rather than presenting them as a fitted model.
+    """
+    if model is None:
+        return None
+    summary = model_summary(model)
+    return {
+        "match_rate": summary["lambda"],
+        "iterations": summary["iterations"],
+        "converged": summary["converged"],
+        "pairs": summary["pairs"],
+        "promote": summary["promote"],
+        "weights_at_start": model.m == _copy_dist(M0) and model.u == _copy_dist(U0),
+    }
+
+
 def _patterns_for(room, case, raw, frequencies, cutoff):
     """One pattern per candidate person, in person order. Missing case → one empty pattern."""
     hit_id = (case.hit_id if case is not None else (raw or {}).get("hit_id")) or ""

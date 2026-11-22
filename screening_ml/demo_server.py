@@ -220,7 +220,8 @@ def make_handler(engine):
                 with open(REVIEW_PAGE, encoding="utf-8") as handle:
                     self._send(200, handle.read(), "text/html; charset=utf-8")
             elif path == "/api/review/alerts":
-                self._send(200, json.dumps(engine.review.alerts(), ensure_ascii=False), "application/json")
+                body = {"alerts": engine.review.alerts(), "score": engine.review.score}
+                self._send(200, json.dumps(body, ensure_ascii=False), "application/json")
             elif path == "/api/review/queue":
                 self._send(200, json.dumps(engine.review.queue(), ensure_ascii=False), "application/json")
             elif path == "/api/review/hit":

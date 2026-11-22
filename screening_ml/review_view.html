@@ -88,6 +88,7 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted)
     <label class="hint" for="reviewer">Reviewer</label><input id="reviewer" placeholder="Your name">
     <button class="ghost" id="theme" title="Light / dark">◐</button>
   </header>
+  <p class="hint" id="scoreNote"></p>
   <div class="tabs" id="tabs"></div>
   <div class="grid">
     <section class="card">
@@ -103,6 +104,21 @@ const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const VERDICT = {SAME_ENTITY: "Same person", REVIEW: "Can't decide", DIFFERENT_ENTITY: "Different person"};
 const VD = {same: "✓ Same", different: "✗ Different", unknown: "? Unknown", partly: "≈ Partly"};
+const FIELD_LABEL = {name:"Name", rarity:"Name rarity", dob:"Date of birth", country:"Country", entity_type:"Person or company", document:"Document", alias:"Alias", time:"Timing"};
+const signed = n => { const v = Number(n); if (!Number.isFinite(v)) return "–"; return (v > 0 ? "+" : "") + v.toFixed(4); };
+const pct1 = n => { const v = Number(n); if (!Number.isFinite(v)) return "–"; return (Math.round(v * 1000) / 10).toFixed(1) + "%"; };
+function fitLine(score){
+  if (!score) return "Match score is not available for this folder. Decisions are the rules alone.";
+  const n = Number(score.iterations), step = n === 1 ? "iteration" : "iterations";
+  const settled = score.converged ? `converged in ${n} ${step}` : `did not converge after ${n} ${step}, so the starting match rate was kept`;
+  const rate = Number(score.match_rate);
+  const weights = score.weights_at_start ? "Comparison weights stay at their start. " : (score.weights_at_start === false ? "Comparison weights differ from their start. " : "");
+  const role = score.promote
+    ? "Promotion is on. A clearance or a confirmation the rules did not already make is still refused."
+    : "The score ranks the review queue and never changes a decision.";
+  return `Match rate ${Number.isFinite(rate) ? rate.toFixed(6) : "–"} · ${score.pairs} pairs · ${settled}. ${weights}${role}`;
+}
+let scoreMeta = null;
 const TABS = [["mlro", "Needs MLRO"], ["analyst", "Needs analyst"], ["spot", "Spot-check"], ["closed", "Done"]];
 const STATE = {analyst: "Waiting for analyst", mlro: "Waiting for MLRO", qa: "Spot-check", done: "Done"};
 let alerts = [], tab = "mlro", current = null;
@@ -118,7 +134,10 @@ $("#theme").onclick = () => {
 };
 
 async function load() {
-  alerts = await (await fetch("/api/review/alerts")).json();
+  const payload = await (await fetch("/api/review/alerts")).json();
+  if (Array.isArray(payload)) { alerts = payload; scoreMeta = null; }
+  else { alerts = payload.alerts || []; scoreMeta = payload.score || null; }
+  $("#scoreNote").textContent = fitLine(scoreMeta);
   renderTabs(); renderList();
 }
 function renderTabs() {
@@ -136,7 +155,7 @@ function renderList() {
     const c = {};
     a.hits.forEach(h => c[h.decision] = (c[h.decision] || 0) + 1);
     return `<div class="al ${current === a.alert_id ? "sel" : ""}" data-id="${esc(a.alert_id)}">
-      <b>${esc(a.customer)}</b><small>${esc(a.alert_id)} · ${a.hits.length} hit${a.hits.length > 1 ? "s" : ""}${a.review_top != null && tab === "analyst" ? ` · up to ${Math.round(100 * a.review_top)}% same` : ""}</small>
+      <b>${esc(a.customer)}</b><small>${esc(a.alert_id)} · ${a.hits.length} hit${a.hits.length > 1 ? "s" : ""}${a.review_top != null && tab === "analyst" ? ` · up to ${pct1(a.review_top)} same` : ""}</small>
       <div class="pills">${Object.entries(c).map(([d, k]) => `<span class="pill p-${d}">${k} ${VERDICT[d]}</span>`).join("")}</div></div>`;
   }).join("") : `<div class="empty">Nothing here.</div>`;
   document.querySelectorAll(".al").forEach(el => el.onclick = () => openAlert(el.dataset.id));
@@ -155,15 +174,24 @@ async function openAlert(id) {
     ${hits.map(hitCard).join("")}`;
   hits.forEach(wire);
 }
+function scoreBlock(d) {
+  if (d.match_probability == null) return "";
+  const levels = d.match_levels || {}, weights = d.field_weights || {};
+  const keys = Object.keys(weights).length ? Object.keys(weights) : Object.keys(levels);
+  const rows = keys.map(k => `<tr><td class="f">${esc(FIELD_LABEL[k] || k)}</td><td>${esc(levels[k] ?? "–")}</td><td class="vd">${esc(signed(weights[k]))}</td></tr>`).join("");
+  const rank = d.review_rank ? `Review queue #${d.review_rank}. ` : "Not in the review queue. ";
+  return `<p class="hint">Probability ${esc(Number(d.match_probability).toFixed(6))} (${pct1(d.match_probability)}) · log2 weight ${esc(signed(d.match_weight))}. ${rank}The rules made this decision.</p>
+    ${rows ? `<table><tr><th>Field</th><th>Level</th><th>log2 weight</th></tr>${rows}</table>` : ""}`;
+}
 function hitCard(d) {
   const h = d.hit || {};
   return `<div class="hit" id="h-${esc(d.hit_id)}">
     <div class="hit-top"><span class="verdict v-${esc(d.decision)}">${VERDICT[d.decision]}</span>
       <span class="listed">${esc(h.name || d.listed)}</span><span class="cat">${esc(h.category || "")}</span>
-      ${d.match_probability == null ? "" : `<span class="cat">P(same) ${Math.round(100 * d.match_probability)}%${d.review_rank ? " · queue #" + d.review_rank : ""}</span>`}
+      ${d.match_probability == null ? "" : `<span class="cat">P(same) ${pct1(d.match_probability)}${d.review_rank ? " · queue #" + d.review_rank : ""}</span>`}
       <span class="state">${esc(STATE[d.queue] || d.queue)}${d.status && d.status !== "New" ? " · " + esc(d.status) : ""}</span></div>
     <div class="summary">${esc(d.summary)}</div>
-    ${d.match_probability == null ? "" : `<div class="summary">Match score ${Math.round(1000 * d.match_probability) / 10}% chance this is the same person${d.review_rank ? " (review queue #" + d.review_rank + ")" : ""}. The rules still decide; the score only orders the queue.</div>`}
+    ${scoreBlock(d)}
     <table><tr><th></th><th>Customer</th><th>Listed person</th><th></th></tr>
       ${(d.facts || []).map(f => `<tr><td class="f">${esc(f.fact)}</td><td>${esc(f.customer)}</td><td>${esc(f.listed)}</td>
         <td class="vd vd-${esc(f.verdict)}">${VD[f.verdict] || ""}</td></tr>`).join("")}</table>
