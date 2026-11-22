@@ -257,8 +257,11 @@ The rule engine always makes the decision. An **optional** extractor (`screening
 free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (stdlib `urllib`).
 `SCREENING_LLM=0` turns it off.
 
-- **Model and settings**: pinned `google/gemini-2.5-flash`, temperature 0, no thinking tokens, `max_tokens`
-  2500.
+- **Model and settings**: pinned `x-ai/grok-4-fast` (Grok 4 Fast on OpenRouter), temperature 0, no thinking
+  tokens, `max_tokens` 2500. The cost estimate uses $0.20 per 1M input tokens and $0.50 per 1M output
+  tokens, the last standard rates published for this id. On 2026-11-22 OpenRouter's endpoints list for it
+  was empty and the model page marked the id deprecated. The cache key includes the model id, so a cache
+  filled by another model is not reused.
 - **Prompts**: three fixed prompts:
   - `PROMPT_NOTE`: a KYC or support note → outcome, a stated DOB, countries
   - `PROMPT_PROFILE`: a hit profile's first paragraph → birth years, places
@@ -269,8 +272,9 @@ free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (s
   - a DOB is used when the model and the regex agree, or when one of them is unknown
   - a model-only date can clear a hit only because its quote was checked; any other new clear is refused
 - **Failures**: no key, a timeout, a bad status or invalid JSON leave the regex result standing.
-- **Cost and time**: on dev, about 2,600 texts in about 320 batched calls, roughly $0.25. A timed-out batch
-  falls back to the regex.
+- **Cost and time**: on dev, about 2,600 texts in about 320 batched calls. The roughly $0.25 figure was
+  measured with Gemini 2.5 Flash and has not been remeasured on Grok 4 Fast. A timed-out batch falls back
+  to the regex.
 
 This environment had no key, so `output/dev.jsonl` is the rules-only output.
 

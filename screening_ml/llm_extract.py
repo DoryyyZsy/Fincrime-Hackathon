@@ -16,11 +16,19 @@ from dataclasses import dataclass, field
 
 from . import normalize as N
 
-# Pinned model. Prices are OpenRouter's posted standard rates for this id
-# ($0.30 / $2.50 per 1M tokens). Thinking is switched off so output stays the JSON.
-MODEL = "google/gemini-2.5-flash"
-PRICE_INPUT_PER_TOKEN = 0.30 / 1_000_000
-PRICE_OUTPUT_PER_TOKEN = 2.50 / 1_000_000
+# Pinned model. Id checked 2026-11-22:
+# GET https://openrouter.ai/api/v1/models/x-ai/grok-4-fast/endpoints
+# returns id "x-ai/grok-4-fast", name "xAI: Grok 4 Fast", and an empty
+# endpoints list. The model page's routing_error_message says the id is
+# deprecated in favour of x-ai/grok-4.3, and GET /api/v1/models does not
+# list it, so there is no live per-token rate to copy. The constants are
+# the last standard rates published for this id, $0.20 input and $0.50
+# output per 1M tokens (cache reads were $0.05 and are not billed here).
+# Thinking stays off via reasoning.max_tokens 0. The cache key includes
+# this id, so answers cached for another model are not reused.
+MODEL = "x-ai/grok-4-fast"
+PRICE_INPUT_PER_TOKEN = 0.20 / 1_000_000
+PRICE_OUTPUT_PER_TOKEN = 0.50 / 1_000_000
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 BATCH = 8
 WORKERS = 8
