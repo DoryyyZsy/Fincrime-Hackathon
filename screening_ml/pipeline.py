@@ -1,7 +1,8 @@
 """Run the rule engine, optionally after the OpenRouter extractors.
 
 With no client the decisions are exactly the regex engine. A client that fails
-open is treated the same way.
+open is treated the same way. The Fellegi–Sunter score annotates and does not
+change the decision.
 """
 import json
 

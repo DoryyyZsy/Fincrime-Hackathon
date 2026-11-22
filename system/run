@@ -7,7 +7,7 @@ every hit. A Fellegi–Sunter match probability is written beside that file
 decision. SCREENING_MATCH_SCORE=1 also copies match_probability onto each output
 line. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
 OpenRouter model first and then checked against the regex extractors. No key,
-SCREENING_LLM=0, or any model failure uses the regex engine alone.
+SCREENING_LLM=0, or any model failure uses local evidence extraction.
 """
 import os
 import sys
@@ -20,6 +20,7 @@ try:  # stdlib modules only; the model client uses urllib
     from screening_ml.data import DataRoom
     from screening_ml.linkage import attach_match_scores, write_scores
     from screening_ml.llm_extract import LlmClient
+    from screening_ml.neural import parameters
     from screening_ml.pipeline import adjudicate, write_rows
 except ImportError as error:
     sys.exit(f"cannot import the engine from {ROOT}/screening_ml: {error}")
@@ -30,6 +31,7 @@ def main(argv):
         sys.exit("usage: system/run <data folder> <output file>")
     folder, out_path = argv[1], argv[2]
     t0 = time.time()
+    parameters()  # Fail clearly if the packaged model is missing or incompatible.
     room = DataRoom(folder)
     client = LlmClient.from_env()
     rows, errors, stats, scores, fit = adjudicate(room, client)
@@ -45,7 +47,7 @@ def main(argv):
     if stats:
         message += "; " + stats
     elif client is None:
-        message += "; regex only (no OpenRouter key)"
+        message += "; rules only (no OpenRouter key)"
     if score_path:
         message += f"; match scores in {score_path} (decisions unchanged)"
     else:

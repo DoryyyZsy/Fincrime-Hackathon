@@ -2,7 +2,7 @@
 
     python -m screening_ml.predict --data data/screening/dev --out artifacts/dev_nn.jsonl [--checkpoint artifacts/model.pt]
 
-The submission file output/dev.jsonl is written by system/run (rule engine, standard library only), not here.
+This is the PyTorch evaluation path. system/run uses the packaged HitNet and evidence guards.
 """
 import argparse
 import json

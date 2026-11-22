@@ -3,6 +3,7 @@ import calendar
 import json
 import re
 import unicodedata
+from calendar import monthrange
 from functools import lru_cache
 
 # ---------------------------------------------------------------- dates
@@ -13,12 +14,26 @@ MONTHS = {
 for _name, _num in list(MONTHS.items()):
     MONTHS[_name[:3]] = _num
 MONTHS["sept"] = 9
+MONTHS.update(zip(
+    "janvier février mars avril mai juin juillet août septembre octobre novembre décembre".split(),
+    range(1, 13),
+))
 _MON = r"(?:" + "|".join(sorted(MONTHS, key=len, reverse=True)) + r")\.?"
+
+
+def _slash_date(match):
+    first, second, year = match.groups()
+    if 1 <= int(first) <= 12 < int(second):
+        return year, first, second
+    return year, second, first
+
 
 # Each pattern yields (year, month, day) with None for parts the text does not give.
 _DATE_PATTERNS = [
-    (re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b"), lambda m: (m[1], m[2], m[3])),
-    (re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b"), lambda m: (m[3], m[2], m[1])),  # day first
+    (re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})(?=\b|T\d)"), lambda m: (m[1], m[2], m[3])),
+    (re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b"), _slash_date),  # day first if ambiguous
+    (re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b"), lambda m: (m[3], m[2], m[1])),
+    (re.compile(r"(?<!\d)(\d{4})年(\d{1,2})月(\d{1,2})日"), lambda m: (m[1], m[2], m[3])),
     (re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)? (" + _MON + r"),? (\d{4})\b", re.I), lambda m: (m[3], m[2], m[1])),
     (re.compile(r"\b(" + _MON + r") (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})\b", re.I), lambda m: (m[3], m[1], m[2])),
     (re.compile(r"\b(\d{4})-(\d{1,2})\b(?!-)"), lambda m: (m[1], m[2], None)),
@@ -36,7 +51,9 @@ def _to_int(part):
 
 
 def _valid(y, m, d):
-    return y is not None and 1800 <= y <= 2100 and (m is None or 1 <= m <= 12) and (d is None or 1 <= d <= 31)
+    return (y is not None and 1800 <= y <= 2100
+            and (m is None or 1 <= m <= 12)
+            and (d is None or (m is not None and 1 <= d <= monthrange(y, m)[1])))
 
 
 def is_real_date(year, month, day):
@@ -78,13 +95,12 @@ def parse_date(text):
     """
     if text is None:
         return None
-    text = str(text).strip()
+    text = unicodedata.normalize("NFKC", str(text)).strip()
     for pattern, pick in _DATE_PATTERNS:
         m = pattern.search(text)
         if m:
             y, mo, d = (_to_int(p) for p in pick(m))
-            if _valid(y, mo, d):
-                return (y, mo, d)
+            return (y, mo, d) if _valid(y, mo, d) else None
     return None
 
 
@@ -119,14 +135,15 @@ def date_spans(text):
     would be unsafe.
     """
     found, taken = [], []
+    text = unicodedata.normalize("NFKC", text or "")
     for pattern, pick in _DATE_PATTERNS:
         for match in pattern.finditer(text or ""):
             if any(match.start() < end and start < match.end() for start, end in taken):
                 continue
             year, month, day = (_to_int(part) for part in pick(match))
+            taken.append((match.start(), match.end()))
             if _valid(year, month, day):
                 found.append(((year, month, day), match.start(), match.end(), text[match.start():match.end()]))
-                taken.append((match.start(), match.end()))
     found.sort(key=lambda item: item[1])
     return found
 
@@ -146,6 +163,7 @@ def find_dates(text, flexible_slash=False):
         for match in pattern.finditer(text or ""):
             if any(match.start() < end and start < match.end() for start, end in taken):
                 continue
+            taken.append((match.start(), match.end()))
             if pattern.pattern.startswith(r"\b(\d{1,2})/"):
                 readings = slash_readings(int(match.group(1)), int(match.group(2)), int(match.group(3)))
                 if not readings:
@@ -157,7 +175,6 @@ def find_dates(text, flexible_slash=False):
                     continue
                 date = (year, month, day)
             found.append((date, match.start()))
-            taken.append((match.start(), match.end()))
     return [date for date, _ in sorted(found, key=lambda item: item[1])]
 
 
@@ -233,6 +250,19 @@ KNOWN_COUNTRIES = set(_CODES.values()) | set(_ADJECTIVES.values()) | set(_ALIASE
 def _fold(text):
     text = unicodedata.normalize("NFKD", str(text))
     return "".join(c for c in text if not unicodedata.combining(c))
+
+
+def _fold_name(text):
+    chars = []
+    latin = False
+    for char in unicodedata.normalize("NFKD", str(text)):
+        if unicodedata.category(char).startswith("M"):
+            if not latin:
+                chars.append(char)
+        else:
+            latin = unicodedata.name(char, "").startswith("LATIN ")
+            chars.append(char)
+    return unicodedata.normalize("NFC", "".join(chars).casefold())
 
 
 def _letters(text):
@@ -324,9 +354,9 @@ def load_name_variants(path):
     _VARIANTS.clear()
     for gid, group in enumerate(groups):
         for name in group:
-            _VARIANTS.setdefault(_fold(name).lower(), set()).add(gid)
+            _VARIANTS.setdefault(_fold_name(name), set()).add(gid)
     LEGAL_FORMS.clear()
-    LEGAL_FORMS.update(_fold(f).lower().replace(".", "") for f in forms)
+    LEGAL_FORMS.update(_fold_name(f).replace(".", "") for f in forms)
 
 
 def name_parts(name, company=False):
@@ -334,8 +364,8 @@ def name_parts(name, company=False):
     if not name:
         return []
     text = re.sub(r"\(.*?\)|\[.*?\]", " ", str(name))
-    text = _fold(text).lower()
-    text = re.sub(r"[^a-z0-9 ]+", " ", text.replace("'", "").replace(".", ""))
+    text = _fold_name(text).replace("'", "").replace("’", "").replace(".", "")
+    text = "".join(c if c.isalnum() or unicodedata.category(c).startswith("M") else " " for c in text)
     parts, seen = [], set()
     for part in text.split():
         if len(part) < 2 or part.isdigit() or part in PLACEHOLDERS:
@@ -349,6 +379,39 @@ def name_parts(name, company=False):
             seen.add(part)
             parts.append(part)
     return parts
+
+
+def unspaced_name(parts):
+    """A multi-character East Asian name can be written as one token."""
+    return len(parts) == 1 and len(parts[0]) >= 2 and all(
+        unicodedata.name(c, "").startswith(("CJK ", "HIRAGANA ", "KATAKANA ", "HANGUL "))
+        for c in parts[0]
+    )
+
+
+def name_scripts(parts):
+    return {unicodedata.name(c, "").split(" ", 1)[0] for part in parts for c in part if c.isalpha()}
+
+
+# A limited Russian-to-Latin spelling for review referrals. Supplied aliases
+# remain the primary evidence for equivalence across writing systems.
+_RUSSIAN_LATIN = str.maketrans(dict(zip(
+    "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    ("a", "b", "v", "g", "d", "e", "yo", "zh", "z", "i", "y", "k", "l",
+     "m", "n", "o", "p", "r", "s", "t", "u", "f", "kh", "ts", "ch",
+     "sh", "shch", "", "y", "", "e", "yu", "ya"),
+)))
+
+
+def transliterated_name_agrees(left, right):
+    """Exact multi-part spelling across Latin and Cyrillic, allowing token reordering."""
+    if len(left) < 2 or len(left) != len(right):
+        return False
+    if {frozenset(name_scripts(left)), frozenset(name_scripts(right))} != {
+            frozenset({"CYRILLIC"}), frozenset({"LATIN"})}:
+        return False
+    return sorted(p.translate(_RUSSIAN_LATIN) for p in left) == sorted(
+        p.translate(_RUSSIAN_LATIN) for p in right)
 
 
 @lru_cache(maxsize=500_000)
@@ -371,6 +434,8 @@ def parts_match(a, b):
         return True
     if _VARIANTS.get(a, set()) & _VARIANTS.get(b, set()):
         return True
+    if unspaced_name([a]) or unspaced_name([b]):
+        return False
     shorter = min(len(a), len(b))
     if shorter < 4:
         return False

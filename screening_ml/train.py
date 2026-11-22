@@ -1,4 +1,4 @@
-"""Train the hit network on silver labels, validate on the gold practice labels.
+"""Train the hit network on silver labels, validate on grouped, non-practice cases.
 
     python -m screening_ml.train [--config screening_ml/config.yaml] [--device cuda|mps|cpu] [--rebuild]
 """
@@ -9,8 +9,9 @@ import time
 import numpy as np
 import torch
 
-from .common import apply_drops, gold_targets, load_config, report, save_checkpoint, silver_targets
+from .common import apply_drops, load_config, report, save_checkpoint, silver_targets
 from .features import build_cases
+from .holdout import is_practice_hit
 from .model import HitNet, decide, loss_fn, pick_device, set_seed
 
 
@@ -138,19 +139,16 @@ def main(argv=None):
     t0 = time.time()
     data = build_cases(cfg["data_dir"], cache_dir=f"{cfg['artifacts_dir']}/cache", use_cache=not args.rebuild)
     cases, Xnp = data["cases"], data["X"]
+    groups = leakage_groups(cases)
+    excluded_groups = {groups[i] for i, case in enumerate(cases) if is_practice_hit(case.hit_id)}
+    eligible = np.flatnonzero(~np.isin(groups, list(excluded_groups)))
+    groups = groups[eligible]
+    Xnp = Xnp[eligible]
+    cases = [cases[i] for i in eligible]
     y_dec_np, y_code_np = silver_targets(cases)
-    g_idx, g_dec, g_code, g_rows = gold_targets(cases, data["practice_labels"])
-    print(f"features: {Xnp.shape[0]} hits x {Xnp.shape[1]} features; gold labels: {len(g_idx)}")
-
-    exclude = g_idx if cfg["labels"].get("exclude_gold_from_train", True) else []
-    groups = leakage_groups(cases) if cfg["labels"].get("group_split", True) else None
-    train_idx, val_idx = split_indices(len(cases), exclude, cfg["labels"]["val_fraction"], y_dec_np, cfg["seed"], groups)
-    removed = len(cases) - len(train_idx) - len(val_idx) - len(exclude)
-    print(f"split: train {len(train_idx)} silver, val {len(val_idx)} silver, gold held out {len(exclude)}"
-          + (f", {removed} more removed for sharing an alert/customer/watchlist name with gold" if groups is not None else " (per-hit split: leaky)"))
-    print(f"leakage check: exact feature duplicates val-in-train {duplicate_rows(Xnp, val_idx, train_idx)}/{len(val_idx)}, "
-          f"gold-in-train {duplicate_rows(Xnp, g_idx, train_idx)}/{len(g_idx)}")
-
+    train_idx, val_idx = split_indices(len(cases), [], cfg["labels"]["val_fraction"], y_dec_np, cfg["seed"], groups)
+    print(f"split: {len(train_idx)} train, {len(val_idx)} validation; "
+          f"{len(data['cases']) - len(eligible)} practice or linked hits excluded")
     Xnp, dropped = apply_drops(Xnp, data["feature_names"], cfg)  # ablation, see config.yaml
     if dropped:
         print(f"dropped features: {dropped}")
@@ -180,9 +178,6 @@ def main(argv=None):
         "silver_train": report("silver train", y_dec_np[train_idx], dec[train_idx], y_code_np[train_idx], code[train_idx]),
         "silver_val": report("silver val  ", y_dec_np[val_idx], dec[val_idx], y_code_np[val_idx], code[val_idx]),
     }
-    if len(g_idx):
-        metrics["gold"] = report("gold (practice labels)", g_dec, dec[g_idx], g_code, code[g_idx], g_rows)
-        metrics["teacher_on_gold"] = report("rule teacher on gold  ", g_dec, y_dec_np[g_idx], g_code, y_code_np[g_idx], g_rows)
     out = args.out or f"{cfg['artifacts_dir']}/model.pt"
 
     if cfg["train"].get("final_fit", True) and best_epoch:
@@ -190,7 +185,7 @@ def main(argv=None):
         # every non-gold hit for the epoch count early stopping chose; there is no held-out set left after this.
         save_checkpoint(out.replace(".pt", "_eval.pt"), model, mean, std, cfg, data["feature_names"], metrics)
         set_seed(cfg["seed"], cfg.get("deterministic", True))
-        fit_idx = np.array([i for i in range(len(cases)) if i not in set(int(g) for g in exclude)])
+        fit_idx = np.concatenate((train_idx, val_idx))
         mean = Xnp[fit_idx].mean(0)
         std = Xnp[fit_idx].std(0) + 1e-6
         X = torch.tensor((Xnp - mean) / std, dtype=torch.float32, device=device)
@@ -204,10 +199,7 @@ def main(argv=None):
             dl, cl = model(X)
             dec, code, _ = decide(dl, cl, cfg["inference"])
         dec, code = dec.cpu().numpy(), code.cpu().numpy()
-        print(f"\n== final fit on {len(fit_idx)} non-gold hits for {best_epoch} epochs "
-              f"(gold below shares alerts with training: NOT an independent check)")
-        metrics["final_fit"] = {"epochs": best_epoch, "n": int(len(fit_idx)),
-                                "gold_not_independent": report("gold (final model)", g_dec, dec[g_idx], g_code, code[g_idx], g_rows) if len(g_idx) else None}
+        metrics["final_fit"] = {"epochs": best_epoch, "n": len(fit_idx)}
     save_checkpoint(out, model, mean, std, cfg, data["feature_names"], metrics)
     print(f"\nsaved {out} ({time.time() - t0:.1f}s)")
     return 0

@@ -29,7 +29,7 @@ WORK = os.path.join(ROOT, "artifacts", "inspector")
 THIRD_PARTY = ("numpy", "torch", "pandas", "yaml", "requests", "sklearn")
 SCREENING_TESTS = ["tests/test_screening_names.py", "tests/test_screening_rewording.py", "tests/test_screening_output.py",
                    "tests/test_screening_extract.py", "tests/test_llm_extract.py", "tests/test_extract_ages.py",
-                   "tests/test_linkage.py"]
+                   "tests/test_screening_identity.py", "tests/test_linkage.py"]
 
 USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 if USE_COLOR and os.name == "nt":

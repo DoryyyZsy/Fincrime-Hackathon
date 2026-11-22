@@ -9,7 +9,7 @@ ml-train:
 ml-predict:
 	$(PYTHON) -m screening_ml.predict --data $(ML_DATA) --out artifacts/dev_nn.jsonl
 ml-validate:
-	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output artifacts/dev_nn.jsonl --score $(ML_DATA)/practice_labels.jsonl
+	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output artifacts/dev_nn.jsonl
 # submission: rule engine, standard library only
 submit-run:
 	$(PYTHON) system/run $(ML_DATA) output/dev.jsonl
@@ -18,10 +18,10 @@ demo:
 analyst-view:
 	$(PYTHON) -m screening_ml.analyst_view --data $(ML_DATA) --out artifacts/analyst_view.html
 submit-validate:
-	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output output/dev.jsonl --score $(ML_DATA)/practice_labels.jsonl
+	$(PYTHON) data/screening/validate.py --data $(ML_DATA) --output output/dev.jsonl
 ml-finetune:
-	$(PYTHON) -m screening_ml.finetune
-ml-all: ml-check ml-train ml-predict ml-validate
+	$(PYTHON) -m screening_ml.finetune --labels "$(ML_LABELS)"
+ml-all: ml-train ml-predict ml-validate
 
 data:
 	$(PYTHON) -m src.load_list

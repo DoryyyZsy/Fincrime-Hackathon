@@ -1,10 +1,14 @@
 # Same Person or Not? Track 2: sanctions screening
 
-Authors: Dory Zhu, Jennifer Liu, Yiding Wang
+**Project team**
+
+- Dory Zhu — dorothy.zhu26@imperial.ac.uk
+- Jennifer Liu jennifer.liu26@imperial.ac.uk
+- Yiding Wang — yiding.wang26@imperial.ac.uk
 
 For every sanctions, PEP, enforcement or adverse-media hit raised against a customer, `system/run` decides
 whether the hit **is the customer** (`SAME_ENTITY`), **someone else** (`DIFFERENT_ENTITY`), or **needs a
-person** (`REVIEW`). It also gives a reason code, the resolved customer record, a 3–4 sentence reason, and the
+person** (`REVIEW`). It also gives a reason code, the resolved customer record, a 2–4 sentence reason, and the
 IDs of the records that decided it. It is Python 3 standard library only, deterministic, and takes about
 10 seconds on the development set. A Fellegi–Sunter match score ranks the review queue and does not change those decisions.
 
@@ -30,8 +34,9 @@ This runs every check and prints PASS or FAIL for each:
 | 5. Rules of the brief | the engine imports no third-party module |
 | 6. Tests | the screening test suite (pytest if installed, otherwise the stdlib `unittest` files) |
 
-Expected on the dev set: **11/11 checks passed**. The validator reports 0 problems and 50/50 practice hits
-with 0 unsafe clearances; the test suite reports 116 passed.
+Default verification checks output format and reproducibility. Practice scoring is a separate command
+(`python inspector.py score` or `python -m screening_ml.eval_linkage`). The test suite reports 135 passed,
+including the identity tests and the linkage tests.
 
 Other commands:
 
@@ -61,14 +66,14 @@ python3 system/run <data folder> <output file>      # e.g. system/run data/scree
 | | |
 |---|---|
 | Output | 819 lines, 0 problems (`validate.py`) |
-| Practice labels | 50/50 right decisions, **0 unsafe clearances**, decision score 100, reason code 100%, customer record 100% |
-| Decisions | 466 `DIFFERENT_ENTITY` (57% cleared automatically), 135 `SAME_ENTITY`, 218 `REVIEW` |
-| Reasons | all 819 have 3 or 4 sentences |
+| Decisions | 439 `DIFFERENT_ENTITY`, 122 `SAME_ENTITY`, 258 `REVIEW` |
+| Reasons | all 819 have 2 to 4 sentences |
 | Reproducibility | byte-identical across runs and hash seeds |
 | Time / cost | about 10 s with no model key, $0 |
 
-Caveat: we looked at the practice labels while building, so this score is optimistic. The unseen set is the
-real test.
+No practice accuracy is reported for this checkpoint. The unseen set supplies the independent test.
+Those decision counts were measured when HitNet wrote the row. `system/run` now writes the rule
+decision and only ranks `REVIEW` with the match score, so rerun it on the dev folder before quoting the counts.
 
 ## Architecture
 
@@ -253,7 +258,7 @@ practice labels, and what a cost threshold would have cleared. That table is not
 
 ## Model and prompts
 
-The rule engine always makes the decision. An **optional** extractor (`screening_ml/llm_extract.py`) reads
+HitNet proposes the decision. Evidence checks can refer it to review. An **optional** extractor (`screening_ml/llm_extract.py`) reads
 free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (stdlib `urllib`).
 `SCREENING_LLM=0` turns it off.
 
@@ -357,25 +362,30 @@ The start page is the screening review; the staff and management pages have butt
 
   All four copies have 0 unsafe and 0 new clearances.
 
-## Experiment: a neural network (not submitted)
+## Selected neural network
 
-`screening_ml/` also contains a small PyTorch network. It is separate from the Fellegi–Sunter score above,
-which is part of the submission. The network is a 2-layer MLP with a decision head and a
-reason-code head, using 50 features, and runs on CUDA, Apple MPS or CPU. It is **not part of the submission**:
-the brief allows only the standard library, and the network does not beat the rules.
+HitNet is packaged beside the Fellegi–Sunter score. `system/run` does not replace the rule decision with it. The score only ranks `REVIEW`.
 
-- **Why it trains on rule-engine labels**: there are only 50 gold labels, with the smallest class at 10 and
-  1 label per feature. So it learns from the rule engine's labels on all 819 hits ("silver" labels), and the
-  gold labels are held out for testing.
-- **Results**: on a leak-free split (hits sharing an alert, customer or watchlist name are kept on one side),
-  it scores 97% on silver validation and 100% on gold. On its own, though, it made 1–2 unsafe clears that
-  only the rule guard blocked.
-- **How to run it**:
-  - `pip install torch numpy pyyaml` (for CUDA, install torch with
-    `--index-url https://download.pytorch.org/whl/cu126`)
-  - `python -m screening_ml.check_data`, then `python -m screening_ml.train`, then
-    `python -m screening_ml.predict`
-  - settings are in `screening_ml/config.yaml`
+HitNet has hidden layers of 128 and 64 units, a three-way decision head and a reason-code head.
+HitNet was fitted from scratch on 407 rule-labeled pairs and selected by validation loss on
+72 separate rule-labeled pairs. Membership fingerprints exclude all 50 practice hits and the
+290 additional hits linked by alert, resolved customer or watchlist name. The training process
+and submission runner work without the practice-answer file. The original evidence rules were
+developed with knowledge of practice cases, so the resulting model still has historical indirect
+exposure. Validation measures agreement with those rules.
+
+The runtime loads the trained weights from `screening_ml/hitnet_weights.json` and runs the
+forward pass with Python's standard library. A clearance requires a model score of at least
+0.90 and a supported contradiction. Unsupported confirmations and uncertain cases go to review.
+A second forward pass neutralizes the upstream match score before authorizing a clearance,
+adapting the field-removal idea from [Ditto](https://github.com/megagonlabs/ditto) to inference.
+Inspired by [Watchman](https://github.com/moov-io/watchman), a multi-part Russian Cyrillic name
+whose Latin spelling agrees with a candidate can send a name- or location-only clearance to review.
+Names, dates and record identifiers supply the evidence for the explanation.
+
+Offline training uses PyTorch. To package a compatible checkpoint, run
+`python -m screening_ml.export_hitnet CHECKPOINT screening_ml/hitnet_weights.json`, rerun
+`system/run`, and validate the resulting decisions against the practice labels.
 
 ## Earlier prototype
 

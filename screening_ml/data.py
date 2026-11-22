@@ -23,10 +23,14 @@ class DataRoom:
         variants = os.path.join(folder, "name_variants.json")
         if os.path.exists(variants):
             N.load_name_variants(variants)
-        labels = os.path.join(folder, "practice_labels.jsonl")
-        self.practice_labels = read_jsonl(labels) if os.path.exists(labels) else []
         self._register_countries()
         self._index()
+
+    @property
+    def practice_labels(self):
+        """Load optional reference answers only when a reporting caller requests them."""
+        path = os.path.join(self.folder, "practice_labels.jsonl")
+        return read_jsonl(path) if os.path.exists(path) else []
 
     def _register_countries(self):
         names = set()

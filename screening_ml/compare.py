@@ -121,8 +121,10 @@ def compare(person, hit, screened_at):
             if (agree, matched, frac, sim) > (best[0], best[1], best[2], best[4]):
                 best = (agree, matched, frac, display, sim)
     name_agree, name_matched, name_frac, matched_name, name_sim = best
-    real_parts = max([len(f.value) for f in person.names] + [len(person.verified_name.value) if person.verified_name else 0] + [0])
-    name_usable = person_company or real_parts >= 2
+    customer_names = [f.value for f in person.names]
+    if person.verified_name:
+        customer_names.append(person.verified_name.value)
+    name_usable = person_company or any(len(parts) >= 2 or N.unspaced_name(parts) for parts in customer_names)
 
     # entity type
     if person.entity_type and hit.entity_type and person_company != hit_company:
@@ -169,7 +171,8 @@ def compare(person, hit, screened_at):
     # location
     cust_countries = set(person.countries)
     overlap = cust_countries & hit.countries
-    if cust_countries and hit.countries and not overlap:
+    location_conflict = bool(cust_countries and hit.countries and not overlap)
+    if location_conflict:
         srcs = sorted({s for c in cust_countries for s in person.countries[c]})
         # Name + DOB agreeing turns a country difference into REVIEW. So does an
         # identity note we could not read: its document country is unknown, and a
@@ -188,8 +191,10 @@ def compare(person, hit, screened_at):
     # verified legal name agrees with none of the hit's names
     if person.verified_name and name_usable and hit.names:
         vparts = person.verified_name.value
-        if len(vparts) >= 2 or person_company:
-            if not any(N.name_agreement(vparts, h)[0] for _, h in hit.names):
+        if len(vparts) >= 2 or N.unspaced_name(vparts) or person_company:
+            scripts = N.name_scripts(vparts)
+            comparable = any(scripts & N.name_scripts(parts) for _, parts in hit.names)
+            if comparable and not any(N.name_agreement(vparts, h)[0] for _, h in hit.names):
                 checks["NAME_MISMATCH_VERIFIED"] = Check(True, person.verified_name.sources,
                                                          f"The customer's verified legal name ({' '.join(vparts).title()}, {', '.join(person.verified_name.sources)}) agrees with none of the hit's names.")
 
@@ -205,7 +210,8 @@ def compare(person, hit, screened_at):
         ev = cid + dob_src + [e for e in hit.dob_evidence if not e.startswith(hit.hit_id)]
         if overlap:
             checks["NAME_DOB_LOCATION_MATCH"] = Check(True, ev + loc_src, f"{dob_txt} {loc_txt} {name_txt}")
-        checks["NAME_DOB_MATCH"] = Check(True, ev, f"{dob_txt} {name_txt}")
+        if not location_conflict:
+            checks["NAME_DOB_MATCH"] = Check(True, ev, f"{dob_txt} {name_txt}")
     if name_agree and overlap and person_company and hit_company:
         checks["NAME_LOCATION_MATCH"] = Check(True, cid + loc_src, f"{loc_txt} {name_txt}")
 
@@ -217,7 +223,14 @@ def compare(person, hit, screened_at):
     elif not dob_agree:
         missing.append("the dates of birth neither agree nor contradict")
     parts = " ".join(t for t in (loc_txt, name_txt if name_agree else "") if t)
-    if held:
+    if location_conflict and name_agree and name_usable and dob_agree and not person_company:
+        country_sources = [source for country in sorted(cust_countries) for source in person.countries[country]]
+        checks["INSUFFICIENT_DATA"] = Check(
+            True, ev + country_sources,
+            f"{dob_txt} {name_txt} The customer is linked to {', '.join(sorted(cust_countries))}, "
+            f"while the hit is linked to {', '.join(sorted(hit.countries))}. The conflicting location evidence requires review.",
+        )
+    elif held:
         text = ((parts + " " if parts else "") + " ".join(held)
                 + (" Otherwise " + " and ".join(missing) + "." if missing else "")
                 + " The hit is kept for a person to review rather than cleared on uncertain evidence.")
