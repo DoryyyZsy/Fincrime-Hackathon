@@ -10,7 +10,7 @@ For every sanctions, PEP, enforcement or adverse-media hit raised against a cust
 whether the hit **is the customer** (`SAME_ENTITY`), **someone else** (`DIFFERENT_ENTITY`), or **needs a
 person** (`REVIEW`). It also gives a reason code, the resolved customer record, a 2–4 sentence reason, and the
 IDs of the records that decided it. It is Python 3 standard library only, deterministic, and takes about
-10 seconds on the development set.
+10 seconds on the development set. HitNet makes the decision. A Fellegi–Sunter match score ranks the review queue and does not change it.
 
 > `system/README.md` is a copy of this file, because the brief asks for a README in `system/`.
 
@@ -34,7 +34,9 @@ This runs every check and prints PASS or FAIL for each:
 | 5. Rules of the brief | the engine imports no third-party module |
 | 6. Tests | the screening test suite (pytest if installed, otherwise the stdlib `unittest` files) |
 
-Default verification checks output format and reproducibility. Practice scoring is a separate, explicit evaluation command.
+Default verification checks output format and reproducibility. Practice scoring is a separate command
+(`python inspector.py score` or `python -m screening_ml.eval_linkage`). The test suite reports 135 passed,
+including the identity tests and the linkage tests.
 
 Other commands:
 
@@ -46,6 +48,9 @@ python inspector.py explain H-D861DA               # one hit: decision, reason, 
 python inspector.py check "Elvira Velasco Morillo" --dob 1968-03-05 --country Spain
                                                    # screen a new customer in the terminal, evidence by evidence
 python inspector.py tests
+python -m unittest tests/test_linkage.py           # the match score, with no dev data
+python -m screening_ml.eval_linkage --data data/screening/dev
+                                                   # how the score ranks the practice labels
 python inspector.py demo                           # the web pages, at http://127.0.0.1:8765/
 ```
 
@@ -88,7 +93,15 @@ search_results.jsonl┘    names + aliases; DOB from `dobs`, else ages in the pr
                     confirm only on agreement: name + DOB (+ country); company: name + country
                     otherwise REVIEW; safety net holds clears that rest on text we may have misread
                          ▼
-                    4. HITNET  (neural.py)  score 50 features, check evidence, emit one row per hit
+                    4. HITNET  (neural.py)
+                    scores the comparison; evidence checks can send a clearance or a confirmation back to review
+                         ▼
+                    5. MATCH SCORE  (linkage.py)
+                    Fellegi–Sunter probability the hit is the customer, fitted by EM on the unlabelled hits
+                    ranks the REVIEW queue; it does not change HitNet's decision
+                         ▼
+                    6. OUTPUT  (pipeline.py, reasoning.py)  one JSON line per hit
+                    the probability is written beside it, in `<output>.scores.jsonl`
 ```
 
 Every fact keeps the IDs of the records it came from (`Fact(value, sources)`), so each check knows its own
@@ -103,6 +116,8 @@ evidence.
 | `screening_ml/hit.py` | watchlist-side facts from fields, free text and search results |
 | `screening_ml/compare.py` | the SOP checks, the safety net, reason codes and evidence |
 | `screening_ml/reasoning.py` | the `reason` text |
+| `screening_ml/neural.py` | HitNet inference; writes the decision, with the evidence checks it already applies |
+| `screening_ml/linkage.py` | Fellegi–Sunter match probability; ranks HitNet's review queue and does not decide |
 | `screening_ml/pipeline.py`, `llm_extract.py` | run order, and the optional model extractor |
 | `inspector.py` | the test command above |
 
@@ -179,7 +194,69 @@ cleared a dev hit (H-BEDA04) whose customer lived there. It is now `REVIEW`.
 
 The decision is pure rules: no randomness and no network unless a model key is set. Lists are sorted or kept
 in file order, and the output follows `hits.jsonl` order. Without a key, output is byte-identical across runs
-and `PYTHONHASHSEED` values (`inspector.py` step 4).
+and `PYTHONHASHSEED` values (`inspector.py` step 4). The match score uses fixed start values, a fixed
+iteration cap and a fixed summation order, so the sidecar is byte-identical across those runs too. It is not
+part of the decision line unless `SCREENING_MATCH_SCORE=1`.
+
+## Probabilistic match score
+
+The rules still decide every hit. `screening_ml/linkage.py` estimates the probability that the customer and
+the hit are the same person, in the Fellegi–Sunter way, and uses it only to rank and annotate the review queue.
+
+Each comparison is a pattern of levels:
+
+- **Name**: exact, strong, partial, weak, disagree, or missing. The tier uses Jaro–Winkler, the share of name
+  parts that match, a Soundex code, and whether the agreeing name is an alias of the listed person.
+- **Rarity**: rare or common, from how often the matched part appears in the customer file. A part seen on at
+  most `max(3, n/500)` customers is rare. A name that does not agree is its own level, so rarity is not
+  applied to a mismatch.
+- **Date of birth**: full date, year and month, year only, within one year (the two years an age in a note can
+  mean), conflict, or missing. One agreeing reading wins. Every reading has to conflict before the level is a
+  conflict, which covers an ambiguous slash date. A missing part of a date stays unknown.
+- **Country** and **entity type**. The files do not record gender, so type is person versus company.
+- **Document**: exact when an approved document number is quoted on the hit, otherwise missing. Absence is
+  unknown, not a contradiction.
+- **Time**: impossible when the rules already found the customer could not be the listed person (too young, or
+  dead before screening).
+
+For each level, m is how often it appears when the two records are the same entity, and u is how often it
+appears when they are not. Those weights **stay at their start**. They are ordered: a full date outranks a
+year, which outranks a missing date, which outranks a contradiction, and the same order holds for names.
+An exact name is only mild evidence, because every pair is already a screening hit. A missing date is mild
+evidence against a match, not for one. Re-estimating the weights from the candidate pairs made the match
+class "a rare exact name" (and, on the next try, "no dated report"), pushed the match rate to 0.62, and
+scored a missing date level with a date that agrees.
+
+Only the match rate is estimated, from the unlabelled hits. It is shrunk halfway toward 0.18 and capped at
+0.30, so the rate is one number and the iteration cannot cycle or label-switch. A step stops when that
+number changes by less than `1e-8`. The cap of 80 iterations is a backstop: a fit that is still moving then
+is discarded and the starting rate is used. Practice labels are not used. The same folder therefore gives
+the same scores under any `PYTHONHASHSEED`. The module is Python standard library only.
+
+The score does not move a decision. `guarded_decision` refuses a `DIFFERENT_ENTITY` the rules did not already
+return, and refuses a `SAME_ENTITY` the rules did not already return. An unsafe clearance costs 60 and a
+review costs 2 or 3, so clearing would have to be under 5% likely to be unsafe before it was cheaper than a
+review. The score is unsupervised, and a review hit is one the rules could not contradict, so promotion stays
+off (`PROMOTE = False`). Turning that flag on would still leave the two refusals in place. The review queue
+is ordered by the probability, highest chance of being the same person first.
+
+`validate.py` checks the decision fields and ignores anything else, but an extra field would make a fresh run
+differ from the committed `output/dev.jsonl`. The probability is written next to the output:
+
+- `<output>.scores.jsonl` — one line per hit: probability, log2 weight, comparison levels, field weights, and
+  the review rank
+- `<output>.scores.meta.json` — the fitted m and u
+
+`SCREENING_MATCH_SCORE=1` also copies `match_probability` onto each decision line. The screening review page
+and the management page show the probability. Filtering the management page to Review sorts that queue by it.
+
+```
+python -m screening_ml.eval_linkage --data data/screening/dev
+python -m unittest tests/test_linkage.py
+```
+
+The evaluation script needs the dev folder, which is git-ignored. It reports how the probability separates the
+practice labels, and what a cost threshold would have cleared. That table is not applied.
 
 ## Model and prompts
 
@@ -187,8 +264,11 @@ HitNet proposes the decision. Evidence checks can refer it to review. An **optio
 free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (stdlib `urllib`).
 `SCREENING_LLM=0` turns it off.
 
-- **Model and settings**: pinned `google/gemini-2.5-flash`, temperature 0, no thinking tokens, `max_tokens`
-  2500.
+- **Model and settings**: pinned `x-ai/grok-4-fast` (Grok 4 Fast on OpenRouter), temperature 0, no thinking
+  tokens, `max_tokens` 2500. The cost estimate uses $0.20 per 1M input tokens and $0.50 per 1M output
+  tokens, the last standard rates published for this id. On 2026-11-22 OpenRouter's endpoints list for it
+  was empty and the model page marked the id deprecated. The cache key includes the model id, so a cache
+  filled by another model is not reused.
 - **Prompts**: three fixed prompts:
   - `PROMPT_NOTE`: a KYC or support note → outcome, a stated DOB, countries
   - `PROMPT_PROFILE`: a hit profile's first paragraph → birth years, places
@@ -199,8 +279,9 @@ free text first when `OPENROUTER_API_KEY` is set, and only through OpenRouter (s
   - a DOB is used when the model and the regex agree, or when one of them is unknown
   - a model-only date can clear a hit only because its quote was checked; any other new clear is refused
 - **Failures**: no key, a timeout, a bad status or invalid JSON leave the regex result standing.
-- **Cost and time**: on dev, about 2,600 texts in about 320 batched calls, roughly $0.25. A timed-out batch
-  falls back to the regex.
+- **Cost and time**: on dev, about 2,600 texts in about 320 batched calls. The roughly $0.25 figure was
+  measured with Gemini 2.5 Flash and has not been remeasured on Grok 4 Fast. A timed-out batch falls back
+  to the regex.
 
 This environment had no key, so `output/dev.jsonl` is the rules-only output.
 
@@ -269,7 +350,12 @@ The start page is the screening review; the staff and management pages have butt
 ## Tests
 
 - `python inspector.py tests`: name rules, reworded residence, KYC and age sentences, the safety net, the
-  output format, extraction edge cases, and the model extractor with a fake transport (no network).
+  output format, extraction edge cases, the model extractor with a fake transport (no network), and the
+  Fellegi–Sunter score.
+- `python -m unittest tests/test_linkage.py`: the score on its own. The fixtures are synthetic, so this does
+  not need `data/screening/dev`.
+- `python -m screening_ml.eval_linkage --data data/screening/dev`: the score against the practice labels, when
+  that folder is present. It does not change decisions and it does not invent a result when the folder is missing.
 - `tests/perturb_screening.py <folder>` rebuilds the folder four ways and scores each copy:
   - KYC dates shifted
   - residence verbs reworded
@@ -279,6 +365,8 @@ The start page is the screening review; the staff and management pages have butt
   All four copies have 0 unsafe and 0 new clearances.
 
 ## Selected neural network
+
+HitNet writes the decision. The Fellegi–Sunter score only ranks `REVIEW`.
 
 HitNet has hidden layers of 128 and 64 units, a three-way decision head and a reason-code head.
 HitNet was fitted from scratch on 407 rule-labeled pairs and selected by validation loss on
@@ -318,5 +406,8 @@ not part of the Track 2 submission.
   location clear, or support a company's name-and-country match.
 - **Single contradictions**: each clear rests on one contradiction. The parsers are conservative, so unknown
   parts never count as a mismatch.
+- **The match score is unsupervised.** It orders the review queue. It is not a calibrated probability, and it
+  does not clear or confirm a hit. On a checkout that has the dev folder, `python -m screening_ml.eval_linkage`
+  shows how it ranks the 50 practice labels.
 - **Data handling**: the data is for event participants only. `data/screening/dev/`, `artifacts/` and the audit
   log are git-ignored.

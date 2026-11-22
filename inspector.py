@@ -28,7 +28,8 @@ COMMITTED = os.path.join(ROOT, "output", "dev.jsonl")
 WORK = os.path.join(ROOT, "artifacts", "inspector")
 THIRD_PARTY = ("numpy", "torch", "pandas", "yaml", "requests", "sklearn")
 SCREENING_TESTS = ["tests/test_screening_names.py", "tests/test_screening_rewording.py", "tests/test_screening_output.py",
-                   "tests/test_screening_extract.py", "tests/test_llm_extract.py", "tests/test_extract_ages.py"]
+                   "tests/test_screening_extract.py", "tests/test_llm_extract.py", "tests/test_extract_ages.py",
+                   "tests/test_screening_identity.py", "tests/test_linkage.py"]
 
 USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 if USE_COLOR and os.name == "nt":
@@ -103,9 +104,10 @@ def run_tests():
     files = [f for f in SCREENING_TESTS if os.path.exists(os.path.join(ROOT, f))]
     if have_pytest:
         cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *files]
-    else:  # the stdlib unittest files still run without pytest
+    else:  # pytest-style modules plus the stdlib linkage tests
         mods = [f[:-3].replace("/", ".") for f in files if f.endswith(("extract.py", "llm_extract.py"))]
-        cmd = [sys.executable, "-m", "unittest", *mods]
+        linkage = [os.path.join(ROOT, f) for f in files if f.endswith("test_linkage.py")]
+        cmd = [sys.executable, "-m", "unittest", *mods, *linkage]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
     lines = (proc.stdout + proc.stderr).strip().splitlines()
     tally = [l.strip(" =") for l in lines if any(w in l for w in (" passed", " failed", "Ran ", "OK", "FAILED"))
@@ -226,7 +228,17 @@ def cmd_explain(args):
     print(f"Watchlist hit:     {hit.get('name')} · {hit.get('primary_category') or ', '.join(hit.get('categories') or [])} · "
           f"{', '.join(hit.get('countries') or []) or '-'} · DOB {', '.join(hit.get('dobs') or []) or '-'}")
     print(f"Customer record:   {row['customer_record_id']}")
-    print(f"\nReason:\n  {row['reason']}\n\nEvidence:")
+    print(f"\nReason:\n  {row['reason']}\n")
+    score_file = os.path.splitext(out)[0] + ".scores.jsonl" if out.endswith(".jsonl") else out + ".scores.jsonl"
+    if os.path.exists(score_file):
+        scored = next((s for s in map(json.loads, open(score_file, encoding="utf-8")) if s.get("hit_id") == args.hit_id), None)
+        if scored:
+            rank = f", review queue #{scored['review_rank']}" if scored.get("review_rank") else ""
+            levels = ", ".join(f"{k}={v}" for k, v in (scored.get("levels") or {}).items())
+            print(f"Match score: {scored['match_probability']:.1%} same person{rank}")
+            print(f"  levels: {levels}")
+            print("  The rules made the decision. The score only ranks the review queue.\n")
+    print("Evidence:")
     wanted = set(row["evidence"])
     found = {}
     for name, key in (("customers", "record_id"), ("kyc_checks", "check_id"), ("notes", "note_id"),

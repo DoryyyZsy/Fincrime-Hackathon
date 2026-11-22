@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Screening hit adjudication: system/run <data folder> <output file>
 
-Reads only <data folder> and writes one JSON line per hit. HitNet scores each hit, with evidence checks on its predictions. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
+Reads only <data folder> and writes one JSON line per hit. HitNet scores each hit,
+with evidence checks on its predictions. A Fellegi–Sunter match probability is
+written beside that file (`<output>.scores.jsonl`); it ranks the review queue and
+does not change the decision. SCREENING_MATCH_SCORE=1 also copies match_probability
+onto each output line. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
 OpenRouter model first and then checked against the regex extractors. No key,
 SCREENING_LLM=0, or any model failure uses local evidence extraction.
 """
@@ -14,8 +18,9 @@ sys.path.insert(0, ROOT)
 
 try:  # stdlib modules only; the model client uses urllib
     from screening_ml.data import DataRoom
-    from screening_ml.neural import parameters
+    from screening_ml.linkage import attach_match_scores, write_scores
     from screening_ml.llm_extract import LlmClient
+    from screening_ml.neural import parameters
     from screening_ml.pipeline import adjudicate, write_rows
 except ImportError as error:
     sys.exit(f"cannot import the engine from {ROOT}/screening_ml: {error}")
@@ -29,9 +34,10 @@ def main(argv):
     parameters()  # Fail clearly if the packaged model is missing or incompatible.
     room = DataRoom(folder)
     client = LlmClient.from_env()
-    rows, errors, stats = adjudicate(room, client)
+    rows, errors, stats, scores, fit = adjudicate(room, client)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-    write_rows(out_path, rows)
+    write_rows(out_path, attach_match_scores(rows, scores))
+    score_path = write_scores(out_path, scores, fit) if scores and fit is not None else None
     counts = {}
     for row in rows:
         counts[row["decision"]] = counts.get(row["decision"], 0) + 1
@@ -42,6 +48,14 @@ def main(argv):
         message += "; " + stats
     elif client is None:
         message += "; HitNet with local evidence extraction"
+    if score_path:
+        disagreed = [row["hit_id"] for row, score in zip(rows, scores) if row["decision"] != score["decision"]]
+        if disagreed:
+            message += f"; match score disagreed with HitNet on {len(disagreed)} hits"
+        else:
+            message += f"; match scores in {score_path} (decisions unchanged)"
+    else:
+        message += "; match scores unavailable"
     print(message, file=sys.stderr)
 
 

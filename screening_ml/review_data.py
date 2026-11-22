@@ -17,6 +17,7 @@ from . import normalize as N
 from .compare import CLEAR_ORDER, CODE_DECISION, decide_case
 from .customer import resolve
 from .hit import build_hit
+from .linkage import score_cases
 
 QA_SAMPLE_PERCENT = 5
 ROUTE = {"SAME_ENTITY": "mlro", "REVIEW": "analyst", "DIFFERENT_ENTITY": "cleared"}
@@ -361,11 +362,14 @@ class ReviewBook:
             self._records[s["result_id"]] = s
         self.items, self.detail = [], {}
         by_alert = {}
+        cases, raws = [], []
         for alert in room.alerts:
             res = resolve(room, alert)
             for hid in alert["hit_ids"]:
                 raw = room.hit_by_id[hid]
                 case = decide_case(res, build_hit(room, raw), alert)
+                cases.append(case)
+                raws.append(raw)
                 comp = case.comparisons[0] if case.comparisons else None
                 route = ROUTE[case.teacher_decision]
                 item = {"hit_id": hid, "alert_id": alert["alert_id"], "decision": case.teacher_decision,
@@ -387,6 +391,20 @@ class ReviewBook:
                     "checks": [{"label": CHECK_LABEL[k], "holds": comp.checks[k].fired} for k in CHECK_LABEL] if comp else [],
                     "records": [{"id": i, "record": self._record(i)} for i in case.teacher_evidence],
                 }
+        try:
+            scores, _fit = score_cases(room, cases, raws)
+        except Exception:
+            scores = []
+        for item, score in zip(self.items, scores):
+            item["match_probability"] = score["match_probability"]
+            item["match_weight"] = score["match_weight"]
+            item["review_rank"] = score["review_rank"]
+            detail = self.detail[item["hit_id"]]
+            detail["match_probability"] = score["match_probability"]
+            detail["match_weight"] = score["match_weight"]
+            detail["review_rank"] = score["review_rank"]
+            detail["match_levels"] = score["levels"]
+            detail["field_weights"] = score["field_weights"]
         for item in self.items:   # an alert closes only when every hit in it is cleared
             item["alert_open"] = any(d != "DIFFERENT_ENTITY" for d in by_alert[item["alert_id"]])
             self.detail[item["hit_id"]]["alert_open"] = item["alert_open"]
@@ -431,15 +449,25 @@ class ReviewBook:
                                                          "hits": []})
             a["hits"].append({"hit_id": item["hit_id"], "listed": item["listed"], "decision": item["decision"],
                               "queue": item["queue"], "status": item["status"],
+                              "match_probability": item.get("match_probability"),
+                              "review_rank": item.get("review_rank"),
                               "summary": self.detail[item["hit_id"]]["summary"]})
         out = []
         for a in by_alert.values():
             qs = {h["queue"] for h in a["hits"]}
             a["stage"] = "mlro" if "mlro" in qs else "analyst" if "analyst" in qs else "spot" if "qa" in qs else "closed"
             a["open"] = any(h["decision"] != "DIFFERENT_ENTITY" for h in a["hits"]) and a["stage"] != "closed"
+            probs = [h["match_probability"] for h in a["hits"] if h["decision"] == "REVIEW" and h.get("match_probability") is not None]
+            a["review_top"] = max(probs) if probs else None
             out.append(a)
         order = {"mlro": 0, "analyst": 1, "spot": 2, "closed": 3}
-        return sorted(out, key=lambda a: (order[a["stage"]], a["alert_id"]))
+
+        def _key(alert):
+            # The analyst queue is the review queue: most likely same person first.
+            top = alert["review_top"] if alert["stage"] == "analyst" and alert.get("review_top") is not None else 0
+            return (order[alert["stage"]], -top, alert["alert_id"])
+
+        return sorted(out, key=_key)
 
     def act(self, form):
         hit_id, role, action = form.get("hit_id"), form.get("role"), form.get("action")

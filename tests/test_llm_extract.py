@@ -137,6 +137,12 @@ class Client(unittest.TestCase):
         from screening_ml.llm_extract import PROMPT_NOTE
         self.assertIsNone(client.cache[cache_key(MODEL, PROMPT_NOTE, "note\nN3\n\nboom")])
 
+    def test_pinned_model_is_grok_4_fast(self):
+        from screening_ml.llm_extract import PRICE_INPUT_PER_TOKEN, PRICE_OUTPUT_PER_TOKEN
+        self.assertEqual(MODEL, "x-ai/grok-4-fast")
+        self.assertEqual(PRICE_INPUT_PER_TOKEN, 0.20 / 1_000_000)
+        self.assertEqual(PRICE_OUTPUT_PER_TOKEN, 0.50 / 1_000_000)
+
     def test_no_key_means_no_client(self):
         saved = {name: os.environ.pop(name, None) for name in ("OPENROUTER_API_KEY", "SCREENING_LLM", "SCREENING_LLM_MOCK")}
         try:

@@ -1,15 +1,24 @@
-"""Build identity evidence and adjudicate every hit with the deployed HitNet."""
+"""Build identity evidence and adjudicate every hit with the deployed HitNet.
+
+The Fellegi–Sunter score is computed after HitNet's decision and does not change it.
+"""
 import json
 
 from .neural import classify
 from .compare import decide_case
 from .customer import resolve
 from .hit import build_hit
+from .linkage import score_cases
 from .llm_extract import reconcile
 
 
 def adjudicate(room, client=None):
-    """One decision row per hit, in hits.jsonl order. Returns (rows, errors, stats_line)."""
+    """One decision row per hit, in hits.jsonl order.
+
+    HitNet makes the decision, including the evidence checks it already applies.
+    Returns (rows, errors, stats_line, scores, fit). The scores annotate that
+    decision and rank REVIEW; they are not written back onto it.
+    """
     resolutions = {}
     for alert in room.alerts:
         try:
@@ -25,11 +34,13 @@ def adjudicate(room, client=None):
         except Exception:
             book = None
             stats = "llm extraction failed; using the regex engine"
-    rows, errors = [], 0
+    rows, cases, raws, errors = [], [], [], 0
     for hit in room.hits:
         alert = room.alert_by_id.get(hit.get("alert_id"))
+        raws.append(hit)
         if alert is None:
             rows.append(_fallback(hit, hit.get("alert_id"), "its alert is missing"))
+            cases.append(None)
             errors += 1
             continue
         try:
@@ -45,11 +56,20 @@ def adjudicate(room, client=None):
                 llm_hit = build_hit(room, hit, book)
                 llm_case = decide_case(llm_resolution, llm_hit, alert)
                 case = reconcile(regex_case, llm_case, llm_hit, llm_resolution)
-            rows.append(_row(classify(case, alert, hit)))
+            decided = classify(case, alert, hit)
+            rows.append(_row(decided))
+            cases.append(decided)
         except Exception as error:
             rows.append(_fallback(hit, alert["alert_id"], type(error).__name__, resolutions.get(alert["alert_id"])))
+            cases.append(None)
             errors += 1
-    return rows, errors, stats
+    # The score annotates. It is applied through guarded_decision, which keeps
+    # the rule decision, so a failure here must not change what was decided.
+    try:
+        scores, fit = score_cases(room, cases, raws)
+    except Exception:
+        scores, fit = [], None
+    return rows, errors, stats, scores, fit
 
 
 def _row(case):
