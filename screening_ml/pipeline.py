@@ -1,11 +1,10 @@
-"""Run the rule engine, optionally after the OpenRouter extractors.
+"""Build identity evidence and adjudicate every hit with the deployed HitNet.
 
-With no client the decisions are exactly the regex engine. A client that fails
-open is treated the same way. The Fellegi–Sunter score annotates and does not
-change the decision.
+The Fellegi–Sunter score is computed after HitNet's decision and does not change it.
 """
 import json
 
+from .neural import classify
 from .compare import decide_case
 from .customer import resolve
 from .hit import build_hit
@@ -14,7 +13,12 @@ from .llm_extract import reconcile
 
 
 def adjudicate(room, client=None):
-    """One decision row per hit, in hits.jsonl order. Returns (rows, errors, stats_line)."""
+    """One decision row per hit, in hits.jsonl order.
+
+    HitNet makes the decision, including the evidence checks it already applies.
+    Returns (rows, errors, stats_line, scores, fit). The scores annotate that
+    decision and rank REVIEW; they are not written back onto it.
+    """
     resolutions = {}
     for alert in room.alerts:
         try:
@@ -52,8 +56,9 @@ def adjudicate(room, client=None):
                 llm_hit = build_hit(room, hit, book)
                 llm_case = decide_case(llm_resolution, llm_hit, alert)
                 case = reconcile(regex_case, llm_case, llm_hit, llm_resolution)
-            rows.append(_row(case))
-            cases.append(case)
+            decided = classify(case, alert, hit)
+            rows.append(_row(decided))
+            cases.append(decided)
         except Exception as error:
             rows.append(_fallback(hit, alert["alert_id"], type(error).__name__, resolutions.get(alert["alert_id"])))
             cases.append(None)

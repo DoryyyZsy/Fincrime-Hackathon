@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Screening hit adjudication: system/run <data folder> <output file>
 
-Reads only <data folder> and writes one JSON line per hit. The rule engine decides
-every hit. A Fellegi–Sunter match probability is written beside that file
-(`<output>.scores.jsonl`); it ranks the review queue and does not change the
-decision. SCREENING_MATCH_SCORE=1 also copies match_probability onto each output
-line. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
+Reads only <data folder> and writes one JSON line per hit. HitNet scores each hit,
+with evidence checks on its predictions. A Fellegi–Sunter match probability is
+written beside that file (`<output>.scores.jsonl`); it ranks the review queue and
+does not change the decision. SCREENING_MATCH_SCORE=1 also copies match_probability
+onto each output line. If OPENROUTER_API_KEY is set, free-text facts are read by a pinned
 OpenRouter model first and then checked against the regex extractors. No key,
 SCREENING_LLM=0, or any model failure uses local evidence extraction.
 """
@@ -47,9 +47,13 @@ def main(argv):
     if stats:
         message += "; " + stats
     elif client is None:
-        message += "; rules only (no OpenRouter key)"
+        message += "; HitNet with local evidence extraction"
     if score_path:
-        message += f"; match scores in {score_path} (decisions unchanged)"
+        disagreed = [row["hit_id"] for row, score in zip(rows, scores) if row["decision"] != score["decision"]]
+        if disagreed:
+            message += f"; match score disagreed with HitNet on {len(disagreed)} hits"
+        else:
+            message += f"; match scores in {score_path} (decisions unchanged)"
     else:
         message += "; match scores unavailable"
     print(message, file=sys.stderr)

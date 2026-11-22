@@ -10,7 +10,7 @@ For every sanctions, PEP, enforcement or adverse-media hit raised against a cust
 whether the hit **is the customer** (`SAME_ENTITY`), **someone else** (`DIFFERENT_ENTITY`), or **needs a
 person** (`REVIEW`). It also gives a reason code, the resolved customer record, a 2–4 sentence reason, and the
 IDs of the records that decided it. It is Python 3 standard library only, deterministic, and takes about
-10 seconds on the development set. A Fellegi–Sunter match score ranks the review queue and does not change those decisions.
+10 seconds on the development set. HitNet makes the decision. A Fellegi–Sunter match score ranks the review queue and does not change it.
 
 > `system/README.md` is a copy of this file, because the brief asks for a README in `system/`.
 
@@ -72,8 +72,6 @@ python3 system/run <data folder> <output file>      # e.g. system/run data/scree
 | Time / cost | about 10 s with no model key, $0 |
 
 No practice accuracy is reported for this checkpoint. The unseen set supplies the independent test.
-Those decision counts were measured when HitNet wrote the row. `system/run` now writes the rule
-decision and only ranks `REVIEW` with the match score, so rerun it on the dev folder before quoting the counts.
 
 ## Architecture
 
@@ -95,11 +93,14 @@ search_results.jsonl┘    names + aliases; DOB from `dobs`, else ages in the pr
                     confirm only on agreement: name + DOB (+ country); company: name + country
                     otherwise REVIEW; safety net holds clears that rest on text we may have misread
                          ▼
-                    4. MATCH SCORE  (linkage.py)
-                    Fellegi–Sunter probability the hit is the customer, fitted by EM on the unlabelled hits
-                    ranks the REVIEW queue; the rules keep the decision
+                    4. HITNET  (neural.py)
+                    scores the comparison; evidence checks can send a clearance or a confirmation back to review
                          ▼
-                    5. OUTPUT  (pipeline.py, reasoning.py)  one JSON line per hit
+                    5. MATCH SCORE  (linkage.py)
+                    Fellegi–Sunter probability the hit is the customer, fitted by EM on the unlabelled hits
+                    ranks the REVIEW queue; it does not change HitNet's decision
+                         ▼
+                    6. OUTPUT  (pipeline.py, reasoning.py)  one JSON line per hit
                     the probability is written beside it, in `<output>.scores.jsonl`
 ```
 
@@ -115,7 +116,8 @@ evidence.
 | `screening_ml/hit.py` | watchlist-side facts from fields, free text and search results |
 | `screening_ml/compare.py` | the SOP checks, the safety net, reason codes and evidence |
 | `screening_ml/reasoning.py` | the `reason` text |
-| `screening_ml/linkage.py` | Fellegi–Sunter match probability; ranks reviews and does not decide |
+| `screening_ml/neural.py` | HitNet inference; writes the decision, with the evidence checks it already applies |
+| `screening_ml/linkage.py` | Fellegi–Sunter match probability; ranks HitNet's review queue and does not decide |
 | `screening_ml/pipeline.py`, `llm_extract.py` | run order, and the optional model extractor |
 | `inspector.py` | the test command above |
 
@@ -364,7 +366,7 @@ The start page is the screening review; the staff and management pages have butt
 
 ## Selected neural network
 
-HitNet is packaged beside the Fellegi–Sunter score. `system/run` does not replace the rule decision with it. The score only ranks `REVIEW`.
+HitNet writes the decision. The Fellegi–Sunter score only ranks `REVIEW`.
 
 HitNet has hidden layers of 128 and 64 units, a three-way decision head and a reason-code head.
 HitNet was fitted from scratch on 407 rule-labeled pairs and selected by validation loss on
