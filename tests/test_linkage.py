@@ -128,8 +128,45 @@ class Model(unittest.TestCase):
         self.assertGreater(p_match, p_other)
         self.assertGreater(p_match, 0.5)
         self.assertLess(p_other, 0.5)
+        self.assertTrue(model.converged)
         self.assertGreaterEqual(model.iterations, 1)
-        self.assertLessEqual(model.iterations, L.EM_ITERS)
+        self.assertLess(model.iterations, 15, f"separated mixture took {model.iterations} iterations")
+        self.assertTrue(L.anchors_hold(model))
+
+    def test_em_converges_when_a_level_points_the_wrong_way(self):
+        """A spread of patterns makes within_1 (and sometimes the name) more common among non-matches.
+
+        Resetting that whole field to the start values cycles and never converges.
+        The projection has to settle, well under the iteration cap, with every anchor intact.
+        """
+        rows = []
+        names = ("exact", "strong", "partial", "weak", "disagree")
+        dobs = ("full", "year_month", "year", "within_1", "conflict", "missing")
+        countries = ("agree", "disagree", "missing")
+        index = 0
+        for name in names:
+            for dob in dobs:
+                for country in countries:
+                    count = 1 + (index * 7 % 17)
+                    rows.extend([_pattern(
+                        name=name, dob=dob, country=country,
+                        rarity="rare" if index % 3 == 0 else "common",
+                        time="impossible" if dob == "conflict" and country == "disagree" else ("ok" if index % 2 == 0 else "missing"),
+                        alias="used" if name == "partial" else "unused",
+                    )] * count)
+                    index += 1
+        model = L.fit(rows)
+        self.assertTrue(model.converged, f"still moving after {model.iterations} iterations")
+        self.assertLess(model.iterations, 30, f"flipped-level mixture took {model.iterations} iterations")
+        self.assertTrue(L.anchors_hold(model))
+        for field, levels in L.LEVELS.items():
+            self.assertAlmostEqual(sum(model.m[field][level] for level in levels), 1.0, places=6)
+            self.assertAlmostEqual(sum(model.u[field][level] for level in levels), 1.0, places=6)
+        # The date-of-birth field is still estimated: it was not frozen on the start values.
+        self.assertGreater(abs(model.m["dob"]["conflict"] - L.M0["dob"]["conflict"]), 1e-3)
+        again = L.fit(list(rows))
+        self.assertEqual(L.model_summary(model), L.model_summary(again))
+        self.assertEqual(model.iterations, again.iterations)
 
     def test_fit_is_deterministic_for_a_fixed_order(self):
         rows = [_pattern(dob="full", country="agree"), _pattern(dob="conflict", country="disagree")] * 6
@@ -271,7 +308,9 @@ class Engine(unittest.TestCase):
             self.assertIsNone(by_id["H-000001"]["review_rank"])
             self.assertTrue(all(0.0 <= score["match_probability"] <= 1.0 for score in scores))
             self.assertTrue(all(score["rule_veto"] for score in scores))
+            self.assertTrue(fit.converged)
             self.assertGreaterEqual(fit.iterations, 1)
+            self.assertLess(fit.iterations, L.EM_ITERS)
 
             again, _, _, scores_again, _ = adjudicate(room)
             self.assertEqual(rows, again)

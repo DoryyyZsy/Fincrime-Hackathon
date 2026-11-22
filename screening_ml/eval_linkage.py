@@ -58,6 +58,8 @@ def report(folder):
     print(f"hits: {len(rows)}  errors sent to review: {errors}")
     print(f"EM iterations: {fit.iterations}  converged: {fit.converged}  "
           f"P(match) prior after fit: {fit.lambda_:.4f}  pairs: {fit.n_pairs}")
+    if getattr(fit, "log_likelihood", None) is not None:
+        print(f"observed-data log-likelihood: {fit.log_likelihood:.2f}")
     print(f"promotion: {'on' if PROMOTE else 'off'}  "
           f"cost ceiling for a clearance P(unsafe) < {CLEAR_PROBABILITY_CEILING:.2f} (not applied)")
     changed = [

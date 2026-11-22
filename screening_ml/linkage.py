@@ -8,9 +8,10 @@ The probability is a sum of field weights, log m(level) / u(level). m is the
 probability of a comparison level when the two records are the same entity, and
 u is the probability when they are not. Both are estimated by
 expectation-maximisation on the hits themselves. Nothing here reads the
-practice labels. Initial values, the iteration cap, the tolerance and the order
-of accumulation are fixed, so the same folder always produces the same scores,
-including under a different PYTHONHASHSEED.
+practice labels. Initial values, the iteration cap and the order of
+accumulation are fixed. A flipped level is put back on the boundary on its
+own, which is what lets the fit settle instead of cycling. The same folder
+always produces the same scores, including under a different PYTHONHASHSEED.
 
 A clearance the rules did not already make is refused, and so is a confirmation
 the rules did not already make. Promoting a review on this score would risk an
@@ -37,8 +38,17 @@ UNSAFE_CLEAR_COST = 60
 REVIEW_COST = 3
 CLEAR_PROBABILITY_CEILING = REVIEW_COST / UNSAFE_CLEAR_COST
 
-EM_ITERS = 20
+# The cap is a backstop. On mixtures where one comparison level points the wrong
+# way, a fit that resets the whole field oscillates and never gets here. The
+# projection below removes that cycle, and these bounds are what a fit that is
+# merely slow is allowed to use.
+EM_ITERS = 80
 EM_TOL = 1e-10
+# Stop early when the observed-data log-likelihood has stopped moving and the
+# parameters are already still at the published precision (probabilities are
+# written to 6 decimal places).
+EM_LL_TOL = 1e-8
+EM_LL_PARAM_TOL = 1e-6
 PRIOR_STRENGTH = 8.0
 LAMBDA0 = 0.18
 PROB_EPS = 1e-6
@@ -546,17 +556,67 @@ def _clip_dist(dist):
     return {level: clipped[level] / total for level in dist}
 
 
-def _anchor(field, m, u):
-    """If a level has flipped meaning, freeze that field on its initial weights.
+def _project_anchors(field, m_dist, u_dist):
+    """Put a flipped level back on the boundary without touching the rest of the field.
 
-    Replacing the whole field keeps both distributions summing to 1. A later
-    iteration may estimate it again. It cannot publish a flipped sign, because
-    this check runs after every M-step.
+    Agreement levels must stay at least as common for a true match as for a
+    non-match, and contradiction levels the other way. Resetting the whole field
+    to the start values when one level flipped is not idempotent: the next
+    E-step undoes it, the likelihood falls, and the fit cycles. This projection
+    sets only the flipped level equal to the other class's probability and
+    rescales the unfixed levels so the distribution still sums to 1. A level
+    that the rescaling then flips is fixed on the next pass. Each pass locks at
+    least one more level, so it finishes, and the result stays on the feasible
+    side of every anchor.
     """
-    for level, sign in ANCHORS.get(field, {}).items():
-        if sign * (m[field][level] - u[field][level]) < 0:
-            m[field] = {lv: M0[field][lv] for lv in LEVELS[field]}
-            u[field] = {lv: U0[field][lv] for lv in LEVELS[field]}
+    anchors = ANCHORS.get(field)
+    if not anchors:
+        return
+    levels = LEVELS[field]
+    locked = {}
+    for _pass in range(len(levels) + 1):
+        progressed = False
+        for level, sign in anchors.items():
+            if level in locked:
+                continue
+            if sign * (m_dist[level] - u_dist[level]) < -1e-15:
+                locked[level] = u_dist[level]
+                progressed = True
+        if not progressed:
+            return
+        free = [level for level in levels if level not in locked]
+        floor_mass = PROB_EPS * len(free)
+        locked_mass = sum(locked.values())
+        if locked_mass > 1.0 - floor_mass:
+            scale = (1.0 - floor_mass) / locked_mass if locked_mass else 1.0
+            for level in locked:
+                locked[level] *= scale
+            locked_mass = sum(locked.values())
+        need = 1.0 - locked_mass
+        free_mass = sum(m_dist[level] for level in free)
+        updated = {level: locked[level] for level in locked}
+        if not free:
+            pass
+        elif free_mass <= PROB_EPS:
+            share = need / len(free)
+            for level in free:
+                updated[level] = share
+        else:
+            scale = need / free_mass
+            for level in free:
+                updated[level] = m_dist[level] * scale
+            for level in free:
+                if updated[level] < PROB_EPS:
+                    updated[level] = PROB_EPS
+            drift = sum(updated[level] for level in levels) - 1.0
+            biggest = free[0]
+            for level in free[1:]:
+                if updated[level] > updated[biggest]:
+                    biggest = level
+            updated[biggest] = max(PROB_EPS, updated[biggest] - drift)
+        for level in levels:
+            m_dist[level] = updated[level]
+        if not free:
             return
 
 
@@ -588,16 +648,38 @@ def _delta(old, new):
     return diff
 
 
+def _observed_loglik(model, patterns):
+    """Log P(patterns | model), summing in pattern order so the total is repeatable."""
+    total = 0.0
+    for pattern in patterns:
+        log_match, log_unmatch = _pair_logs(model, pattern)
+        bigger = log_match if log_match >= log_unmatch else log_unmatch
+        total += bigger + math.log(math.exp(log_match - bigger) + math.exp(log_unmatch - bigger))
+    return total
+
+
+def anchors_hold(model, tol=1e-8):
+    """True when no fitted level has flipped past its anchor, up to `tol`."""
+    for field, anchors in ANCHORS.items():
+        for level, sign in anchors.items():
+            if sign * (model.m[field][level] - model.u[field][level]) < -tol:
+                return False
+    return True
+
+
 def fit(patterns):
     """EM for m, u and the match prior. `patterns` must already be in a fixed order.
 
     The caller sorts pairs before calling, so the weighted sums do not depend on
-    hash randomisation or on the order the hits were resolved. Iteration stops at
-    EM_TOL or at EM_ITERS, whichever comes first.
+    hash randomisation or on the order the hits were resolved. A step stops when
+    the largest parameter change is below EM_TOL, or when the observed-data
+    log-likelihood has stopped moving and the parameters are already still at
+    the published precision. EM_ITERS is only the backstop.
     """
     if not patterns:
         return initial_fit(0)
     current = initial_fit(len(patterns))
+    current.log_likelihood = _observed_loglik(current, patterns)
     converged = False
     last = 0
     for last in range(1, EM_ITERS + 1):
@@ -614,19 +696,24 @@ def fit(patterns):
             u_total = PRIOR_STRENGTH
             for post, pattern in zip(posts, patterns):
                 level = pattern[field]
+                # An unseen level keeps its prior mass. A level that does occur
+                # cannot fall through the floor in _clip_dist, so an empty bin
+                # cannot dominate the weight with log(0).
                 m_counts[level] += post
                 u_counts[level] += 1.0 - post
                 m_total += post
                 u_total += 1.0 - post
             m[field] = _clip_dist({level: m_counts[level] / m_total for level in LEVELS[field]})
             u[field] = _clip_dist({level: u_counts[level] / u_total for level in LEVELS[field]})
-            _anchor(field, m, u)
+            _project_anchors(field, m[field], u[field])
         lam = (sum(posts) + PRIOR_STRENGTH * LAMBDA0) / (len(posts) + PRIOR_STRENGTH)
         lam = min(1.0 - PROB_EPS, max(PROB_EPS, lam))
         updated = Fit(lam, m, u, last, False, len(patterns))
+        updated.log_likelihood = _observed_loglik(updated, patterns)
         change = _delta(current, updated)
+        gain = updated.log_likelihood - current.log_likelihood
         current = updated
-        if change < EM_TOL:
+        if change < EM_TOL or (gain < EM_LL_TOL and change < EM_LL_PARAM_TOL):
             converged = True
             break
     current.converged = converged
